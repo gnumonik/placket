@@ -1,0 +1,205 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.33.0.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: ed02474a0e7c049d7dd4b8ba0ed4ac50a6652da19a447467fd6ddbbf2f79f9d8
+
+name:           placket
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/githubuser/placket#readme>
+homepage:       https://github.com/githubuser/placket#readme
+bug-reports:    https://github.com/githubuser/placket/issues
+author:         Author name here
+maintainer:     example@example.com
+copyright:      2020 Author name here
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    ChangeLog.md
+
+source-repository head
+  type: git
+  location: https://github.com/githubuser/placket
+
+library
+  exposed-modules:
+
+-- Template Haskell Stuff
+      TH
+      TH2
+      THAlias
+      THBase
+      THUtils
+      THPrettyPrint 
+      THDefaults
+      THWrappers
+      THDeriverUtils
+      THRecords
+      THRandom
+
+-- Basic Libraries 
+      PrimParsers 
+      PrimTypes
+      PrimFuncs
+      PrettyPrint
+      GenericFunctions
+      Classes
+      GPrettyPrint
+      LibTypes
+      Aliases
+--   Record Stuff
+           RecordFuncs
+           RecordTypes
+           RecordParsers
+      Wrappers
+-- Protocols 
+      Ethernet
+      IP4
+      ICMP4
+      UDP
+      TCP
+      DNS
+
+-- Packet Level Functions
+      MessageBuilders
+      PacketFilters
+      NextProtocol
+      Serializer
+      PacketOperations
+      OptionalFields 
+
+-- User and Network IO
+      UserAgent
+      PacketIO
+
+-- Machines & Related "High Level" Libraries
+
+--    Packet Machines:
+          BuilderMachines
+          EffectfulMachines
+          SelectorMachines
+          HigherOrderMachines
+          UtilityMachines
+      MachineParser
+      CommandParser
+      SourceManager
+      FactoryTypes
+      PacketServer
+      MachineController
+      ListenServer
+      ARPCache
+      MyReaderT
+      Randomizer
+      PacketSources
+      SourceParser
+
+-- Misc/Tests
+    --  Tests
+
+
+
+  extra-libraries: pcap
+  
+  other-modules:
+      Paths_placket
+      --Network.Pcap
+  hs-source-dirs:
+      src
+  --  , pcap
+    , src/Automata
+    , src/Automata/PacketMachines
+    , src/Base
+    , src/Base/Records
+    , src/TH
+    , src/Protocols
+    , src/PacketFuncs
+    , src/IO 
+
+  build-depends:
+      base >=4.7 && <5
+    , hw-bits
+    , exceptions
+    , utf8-string 
+    , extra 
+    , cereal 
+    , transformers
+    , template-haskell 
+    , bytestring
+    , machines
+    , containers 
+    , network
+    , network-info
+    , lens
+    , binary
+    , vector 
+    , process
+    , mtl
+    , async
+    , time
+    , parsec
+    , text
+    , stm 
+    , generics-sop
+    , sop-core
+    , data-default  
+    , say 
+    , pcap
+    , haskeline
+    , hex-text >=0.1.0.0
+    , mersenne-random-pure64
+
+
+  default-language: Haskell2010
+
+executable placket-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_placket
+  hs-source-dirs:
+      app
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N 
+  -- -O2 -optc-O3 -prof -fprof-auto 
+  -- -funfolding-use-threshold=16 
+
+  build-depends:
+      placket
+    , transformers
+    , hw-bits 
+    , cereal 
+    , base >=4.7 && <5
+    , bytestring
+    , lens
+    , exceptions
+    , binary
+    , machines
+    , process
+    , mtl
+    , network
+    , random
+    , unagi-chan
+    , async
+    , time
+    , say
+    , parsec
+    , text
+    , pcap
+    , haskeline 
+  default-language: Haskell2010
+
+test-suite placket-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_placket
+  hs-source-dirs:
+      test
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N 
+  build-depends:
+      placket
+    , base >=4.7 && <5
+  default-language: Haskell2010
+
