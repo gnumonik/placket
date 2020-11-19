@@ -32,6 +32,8 @@ packages:
 - .
 # - pcap
 
+apply-ghc-options: everything
+rebuild-ghc-options: true 
 
 
 # Dependency packages to be pulled from upstream that are not in the resolver.

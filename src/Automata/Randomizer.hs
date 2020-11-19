@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -15,10 +17,8 @@ import Control.Monad
 import Control.Monad.State.Strict
 
 
-
 import PrimTypes
 import Classes
-
 import Control.Lens hiding (from, to)
 import Data.Word  
 import qualified Data.ByteString as BS
@@ -34,7 +34,6 @@ import qualified Data.Text as T
 
 
 
-
 execRandomizer :: PureMT -> Randomizer a -> PureMT
 execRandomizer seed x = execState x seed 
 
@@ -44,23 +43,23 @@ runRandomizer seed r = runState r seed
 evalRandomizer :: PureMT -> Randomizer a -> a
 evalRandomizer seed r = evalState r seed 
 
-randomize :: forall a. Randomize a => Int -> Randomizer [a]
-randomize n = forM (if n == 0 then [] else [1..n]) (\x -> random @a)
+randomize :: forall a. Randomize a => Int -> Randomizer (V.Vector a)
+randomize n = V.force <$> V.replicateM n (random @a)
 
-randomize' :: Int -> Randomizer a -> Randomizer [a]
+randomize' :: Int -> Randomizer a -> Randomizer (V.Vector a)
 randomize' n r = case n of 
-    0  -> pure [] 
-    _  -> replicateM n r
+    0  -> pure V.empty
+    _  -> V.replicateM n r
 
 randomize'' :: Int -> Randomizer a -> [Randomizer a]
-randomize'' n r = (replicate n r)
+randomize'' n r = replicate n r
     
-randWord :: Randomizer (Word)
+randWord :: Randomizer Word
 randWord = do
     oldSeed <- get
     let (myWord,newSeed) = randomWord oldSeed
     put newSeed
-    return myWord 
+    return $! myWord 
 
 random' :: forall a. Integral a => Randomizer a
 random' = randWord  >>= \a -> return $ fromIntegral a
@@ -76,11 +75,19 @@ instance Randomize Word16 where
 instance Randomize Word32 where
     random = random' 
 
+
+randoBString :: Randomizer BS.ByteString
+randoBString = do 
+    s <- get
+    let (len,seed') = runRandomizer s $ random @Word16
+    let !bs = fst $ BS.unfoldrN (fromIntegral len) (randoBS) s
+    put seed'
+    return $! bs  
+randoBS :: PureMT -> Maybe (Word8,PureMT)
+randoBS seed = Just $ runRandomizer seed $ random @Word8 
+
 instance Randomize (BS.ByteString) where
-    random = do
-        lnth <- random @Word16
-        wrds <-  mapM (\x -> random @Word8) [0..lnth]
-        return $ BS.pack wrds
+    random = randoBString 
 
 
 
@@ -146,8 +153,9 @@ instance Randomize Option where
 
 instance Randomize [Option] where
     random = 
-        random @Word8 >>= \len -> 
-            randomize @Option (fromIntegral $ (len .&. 0b00001111))
+        let !r = random @Word8 >>= \len -> 
+                randomize @Option (fromIntegral $ (len .&. 0b00001111))
+        in V.toList . V.force <$> r 
 
 instance Randomize IP4Packet where
     random = gRandom   
@@ -209,14 +217,14 @@ instance Randomize TCPOption where
                 case kind of
                     0 -> return $ TCPOption 0 0 BS.empty 
                     1 -> return $ TCPOption 1 1 BS.empty
-                    2 -> (TCPOption 2 4) <$>  (fmap BS.pack $  randomize @Word8 4)
-                    3 -> (TCPOption 3 3) <$>  (fmap BS.pack $  randomize @Word8 3)
-                    4 -> (TCPOption 4 2) <$>  (fmap BS.pack $  randomize @Word8 2)
+                    2 -> (TCPOption 2 4) <$>  (fmap (BS.pack . V.toList . V.force) $  randomize @Word8 4)
+                    3 -> (TCPOption 3 3) <$>  (fmap (BS.pack . V.toList . V.force) $  randomize @Word8 3)
+                    4 -> (TCPOption 4 2) <$>  (fmap (BS.pack . V.toList . V.force) $  randomize @Word8 2)
                     5 -> random @Word8 >>= \w -> 
                        pure (sackLengths !! (fromIntegral $ w .&. 0b00001111)) >>= 
                            \len -> 
                               (TCPOption 5 len) 
-                          <$> (fmap BS.pack $ randomize @Word8 (fromIntegral len))
+                          <$> (fmap (BS.pack . V.toList . V.force)$ randomize @Word8 (fromIntegral len))
                     _ -> random @TCPOption 
 
 instance Randomize TCPSegment where
@@ -232,7 +240,7 @@ instance Randomize TCPSegment where
         up      <- random @Word16 
         numOpts <- random @Word8 
         opts    <- randomize @TCPOption (fromIntegral numOpts)
-        let opts' = takeWhile (\x -> x ^. tOpKind /= 0) opts `mappend` [TCPOption 0 0 BS.empty]
+        let opts' = takeWhile (\x -> x ^. tOpKind /= 0) (V.toList . V.force $ opts) `mappend` [TCPOption 0 0 BS.empty]
         let len = (fromIntegral $ foldr (\x y -> x ^. tOpLen + y) 0 opts') + 5
         return $ TCPSegment src dst seqNum ackNum len flgs win chk up opts' 
 
@@ -275,10 +283,10 @@ concat <$> mapM deriveRandomize [''DNSAnswer, ''DNSAuth, ''DNSAdd]
 instance Randomize DNSMessage where
     random = do 
         hdr  <- random @DNSHeader
-        qs   <- randomize @DNSQuestion (fromIntegral $  hdr ^. dhQdCount)
-        ans  <- randomize @DNSAnswer   (fromIntegral $  hdr ^. dhAnCount)
-        auth <- randomize @DNSAuth     (fromIntegral $  hdr ^. dhNsCount)
-        ad   <- randomize @DNSAdd      (fromIntegral $  hdr ^. dhArCount)
+        qs   <- V.toList . V.force <$> randomize @DNSQuestion (fromIntegral $  hdr ^. dhQdCount)
+        ans  <- V.toList . V.force <$> randomize @DNSAnswer   (fromIntegral $  hdr ^. dhAnCount)
+        auth <- V.toList . V.force <$> randomize @DNSAuth     (fromIntegral $  hdr ^. dhNsCount)
+        ad   <- V.toList . V.force <$> randomize @DNSAdd      (fromIntegral $  hdr ^. dhArCount)
         return $ DNSMessage hdr qs ans auth ad 
 
 

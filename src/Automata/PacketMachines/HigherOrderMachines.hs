@@ -108,17 +108,17 @@ data CountDown = CountDown Int | OnCD
 
 counterSwitch :: Int -> PacketMachine -> PacketMachine -> PacketMachine
 counterSwitch n m1 m2 = 
-    execStateM (CountDown n) $ makeCountDownSwitch m1 m2 ~> flattened 
+    execStateM (CountDown 0) $ makeCountDownSwitch m1 m2 ~> flattened 
    where
     makeCountDownSwitch m1' m2' = repeatedly $ do
         s <- lift get
         nextMsg <- await 
         case s of
             CountDown n' -> 
-                if n' > 0 
+                if n' <= n
                     then do
                         newMsg <- liftIO $ runT $ supply [nextMsg] m1'
-                        lift . modify $ \(CountDown x) -> CountDown (x-1)
+                        lift . modify $ \(CountDown x) -> CountDown (x + 1)
                         yield newMsg
                     else do
                         lift . modify $ \x -> OnCD 

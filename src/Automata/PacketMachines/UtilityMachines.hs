@@ -30,6 +30,14 @@ semigrouper = repeatedly $ do
     nextMsg <- await
     yield [nextMsg]
 
+
+-- Machine that calculates checksums over the packet.
+------
+chkSum :: PacketMachine
+chkSum = repeatedly $ do
+    (hdr,nextMsg) <- await
+    yield $ (hdr, apChecksum nextMsg)
+
 ------ 
 -- Delay. Takes an Int, waits that many microseconds, then yields the message it was 
 --   passed as input. Technically an effectful machine but needs to go here to prevent
@@ -72,7 +80,6 @@ packetSender dChan lock chan hdl = forever $ do
     let !serialized = serializeMessage $! V.force nextMsg
     sendPacketBS hdl serialized
   --  atomically . writeTChan dChan $ "PacketSender sent packet: " <> T.pack (show nextMsg)
-    threadDelay 250
 
 writeChan :: MonadIO m => TChan a -> a -> m ()
 writeChan ch x = liftIO . atomically . writeTChan ch $ x 

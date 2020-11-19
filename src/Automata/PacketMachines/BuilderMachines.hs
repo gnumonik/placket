@@ -19,9 +19,9 @@ import Control.Lens
 import Control.Monad.Trans
 import PacketIO (mkPacketHeader)
 
-make :: [V.Vector ProtocolMessage] -> Repeats -> Delay -> PacketMachine
+make :: V.Vector (V.Vector ProtocolMessage) -> Repeats -> Delay -> PacketMachine
 make myMsgs myRepeats myDelay 
-    = let myRegulator = execStateM (myRepeats,Just 0) (regulator . V.force $ V.fromList myMsgs)  
+    = let myRegulator = execStateM (myRepeats,Just 0) (regulator . V.force $  myMsgs)  
       in case myDelay of
           Just n  -> myRegulator ~> delay n ~> flattened 
           Nothing -> myRegulator ~> flattened

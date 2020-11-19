@@ -261,7 +261,7 @@ pushR = lexeme $ try $ do
     let p = PO.makeProtocolMessageV2 pBuilder
     case p of
         Left  err  -> return . return $ Left err
-        Right pkts -> let push' = push $ V.fromList pkts
+        Right pkts -> let push' = push $ V.force pkts
                       in return . return $ Right (push',Nothing) 
 
 
@@ -273,7 +273,7 @@ liftR = lexeme $ try $ do
     let p = PO.makeProtocolMessageV2 pBuilder
     case p of
         Left  err  -> return . return $ Left err
-        Right pkts -> let lift' = liftMch $ V.fromList pkts
+        Right pkts -> let lift' = liftMch $ V.force pkts
                       in return . return $ Right (lift',Nothing)  
 
 setR :: Parser (StateT MyParserState IO ParseOutput)
@@ -284,6 +284,11 @@ setR = lexeme $ try $ do
     case mySet of
         Left err    -> return . return $ Left err
         Right setIt -> return . return $ Right (setIt,Nothing)
+
+chkSumR :: Parser (StateT MyParserState IO ParseOutput)
+chkSumR = lexeme $ try $ do
+    void . lexeme $ string "checksum"
+    return . return $ Right (chkSum,Nothing)
 
 -------
 -- Optional Field Machine Parsers. These have to be treated separately, since it's not possible to express operations on optional fields in normal record selector syntax (and extending it to do so would make it very ugly.)
@@ -423,12 +428,11 @@ createR = lexeme $ try $ do
     void . lexeme $ string "repeat="
     rpts <-  lexeme $ many1 (satisfy isDigit)
     bld <- builder protocolBuilder
-    let ps = mapM PO.makeProtocolMessageV2 bld
+    let ps = V.force <$> V.mapM PO.makeProtocolMessageV2 bld
     case ps of
             Left str -> return . return  $ Left str
-            Right bldrOfLists -> do
-                let bldrs = map V.force $ sequence bldrOfLists
-                let myMach = make bldrs (Just . read $ rpts :: Maybe Int) (Just . read $ dly :: Maybe Int)
+            Right bldr -> do
+                let myMach = make bldr (Just . read $ rpts :: Maybe Int) (Just . read $ dly :: Maybe Int)
                 return . return $ Right (myMach,Nothing)
 
 maybeInt:: Parser (Maybe Int)
@@ -707,9 +711,10 @@ sendIt = lexeme $ try $ do
     void $ lexeme $ string "send"
     return $! do 
         e <- view env <$>  get 
-        let sChan = e ^. sendChan
-        let dChan = e ^. displayChan
-        return $! Right (send dChan sChan,Nothing)
+        let d    = e ^. displayChan 
+        let lock = e ^. pcapLock
+        let hdl  = e ^. pcapHandle
+        return $! Right (send d lock hdl,Nothing)
 
 
 machineName :: Parser MachineName
@@ -758,6 +763,7 @@ machines = lexeme $ try $ do
         "randomize"   -> makeRandom
         "push"        -> pushR
         "lift"        -> liftR
+        "checksum"    -> chkSumR
         _             -> machByName 
 
 
@@ -780,31 +786,43 @@ machineArrParens = lexeme $ try $ do
 
 machineArrow :: Parser (MachineArrow T.Text)
 machineArrow = lexeme $ try $ do
-            a <- lexeme $ untilArr
-            aSymb <- lexeme $ arrSymb
+            a <- untilArr
+            aSymb <- voidEof <|> arrSymb
             case aSymb of
                 "~>" -> do
-                    rest <- machineArrow
+                    rest <- machineArrow 
                     return $ a :~> rest
                 "~+>" -> do
-                    rest <- many1 machineArrow
+                    rest <- many1 machineArrParens
                     return $   a :~+> rest
                 ":|"  -> return $  a :| ()
 
 arrSymb :: Parser String 
-arrSymb =  (lexeme $ try $ string "~>") <|> (lexeme $ try $ string "~+>") <|> (lexeme $ try $ string ":|")
+arrSymb =  (lexeme $ try $ string "~>") <|> (lexeme $ try $ string "~+>") 
+
+
+endNothing :: forall a. Parser (Maybe a)
+endNothing = lexeme $ try $ do
+    _ <- eof
+    return Nothing 
+
+voidEof :: Parser String
+voidEof = lexeme $ try $ do
+    _ <- eof
+    return ":|"
+
 
 untilArr :: Parser T.Text
 untilArr = lexeme $ try $ do
-    first <- manyTill anyChar (lookAhead arrSymb <|> lookAhead (string "("))
-    sep   <- (lookAhead $ lexeme $ string "(") <|> (lookAhead $ lexeme $ string "[") <|> (lookAhead arrSymb)
+    first <- manyTill anyChar (lookAhead arrSymb <|> lookAhead (string "(") <|> voidEof)
+    sep   <- voidEof <|>  (lookAhead $ lexeme . try $ string "(") <|>  (lookAhead arrSymb)
     case sep of
         "(" -> do
-            void . lexeme $ char '('
-            btwn <- many1 $ satisfy (/= ')') 
-            void . lexeme  $ char ')' 
+
+            btwn <- recParens -- between (char '(') (char ')') (many $ satisfy (\x -> x /= ')')) 
+
             rest <- untilArr
-            return $ T.pack (first <> "(" <> btwn <> ")") <> rest
+            return $ T.pack first <>  btwn <> rest
         "[" -> do
             btwn <- manyTill anyChar (lookAhead . lexeme $ char '[')
             void . lexeme $ char ']' 
@@ -812,7 +830,8 @@ untilArr = lexeme $ try $ do
             return $ T.pack (first <> "[" <> btwn <> "]") <> rest
         _   -> return $ T.pack  first 
 
-
+notSep :: Parser [Char]
+notSep = lexeme . try $ many $ satisfy (\x -> x `notElem` ("()" :: String))
 
 builder :: Parser a -> Parser (V.Vector a)
 builder p = lexeme $ try $ do
@@ -822,5 +841,24 @@ builder p = lexeme $ try $ do
             (p  `sepBy1` (lexeme $ char ';') )
     return $! V.force $ V.fromList $ first 
         
+recParens :: Parser T.Text
+recParens = lexeme $ try $ do 
+    void . lexeme $ open 
+    first <- manyTill anyChar (lookAhead open <|> lookAhead close)
+    c <- lookAhead . lexeme $ open <|> close
+    case c of
+        '(' -> do
+            child <- many1 recParens
+            rest  <- manyTill anyChar close 
+            return $ " (" <> T.pack first <> T.concat child <> T.pack rest <> ") " 
+        ')' -> do
+            void . lexeme $ close 
+            return $ " (" <> T.pack first <> ") "
 
 
+   where
+       open :: Parser Char
+       open = lexeme . try $ char '('
+
+       close :: Parser Char
+       close = lexeme . try $ char ')'

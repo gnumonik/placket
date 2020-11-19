@@ -128,9 +128,3 @@ mkWithProtocolMatches = do
            wildBody <- [| Left  $ "Error: " <> $(varE . mkName $ "str") <> " is not a valid protocol type." |]
            let wildMatch = [Match WildP (NormalB wildBody) []]
            return $ (CaseE (VarE . mkName $ "str") (x <> wildMatch) ) 
-{--
-instance Possibly EthernetFrame ProtocolMessage where
-    isA _ (ETHm x) = Just x
-    isA _ _        = Nothing
-    fromA = wrapP
---}

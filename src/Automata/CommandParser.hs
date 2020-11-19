@@ -299,11 +299,18 @@ list p = lexeme $ try $ do
     parsed <- p
     return $! [parsed]
 
+unbracket :: Parser T.Text
+unbracket = lexeme $ try $ do
+    option () spaces 
+    void . lexeme $ char '{'
+    manyTill anyChar (char '}') >>= \x -> return $ T.pack x 
+    
+
 parseDefs :: Parser (MyReader ())
 parseDefs = lexeme $ try $ do 
     void $ try spaces
     def <- defs
-    case mapM (parseLex sortInput) def of
+    case mapM (parseLex (sortInput =<< unbracket)) def of
         Left err -> return $ do
             d <- askForDisplayChan
             writeChan d $ T.pack (show err)

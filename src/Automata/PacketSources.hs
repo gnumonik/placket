@@ -31,9 +31,9 @@ pump = repeatedly $ do
     yield ()
 
 
-generator :: [V.Vector ProtocolMessage] -> Repeats -> Delay -> SourceT IO Message 
+generator :: V.Vector (V.Vector ProtocolMessage) -> Repeats -> Delay -> SourceT IO Message 
 generator myMsgs myRepeats myDelay 
-    = let myRegulator = pump ~> execStateM (myRepeats,Just 0) (regulator . V.force $ V.fromList myMsgs)  
+    = let myRegulator = pump ~> execStateM (myRepeats,Just 0) (regulator . V.force $ myMsgs)  
       in case myDelay of
           Just n  -> myRegulator ~> delay n 
           Nothing -> myRegulator 

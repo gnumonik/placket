@@ -63,7 +63,8 @@ mapToVec v = V.fromList . map snd . Map.toList $ v
 type Randomizer = State PureMT 
 
 class Randomize a where
-    random :: Randomizer a 
+    random :: Randomizer a
+
 
 
 --DNS Names

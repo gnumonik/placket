@@ -40,12 +40,12 @@ import System.Random.Mersenne.Pure64
 makeProtocolMessage :: forall a. (Possibly a ProtocolMessage, Default a) 
              => ProtocolBuilder
              -> Proxy a 
-             -> Either T.Text [ProtocolMessage]
+             -> Either T.Text (V.Vector ProtocolMessage)
 makeProtocolMessage rSel _ = case setProtocolFields rSel of
     Left strs -> Left strs
-    Right f   -> Right $ f (fromA $ (def :: a))
+    Right f   -> Right $ V.force . V.fromList $ f (fromA $! (def :: a))
  
-makeProtocolMessageV2 :: ProtocolBuilder -> Either T.Text [ProtocolMessage]
+makeProtocolMessageV2 :: ProtocolBuilder -> Either T.Text (V.Vector ProtocolMessage)
 makeProtocolMessageV2 rSel@(ProtocolBuilder tStr flds) = case setProtocolFields rSel of
     Left strs -> Left $ strs
     Right f   ->  withProtocol tStr (makeProtocolMessage rSel) 
@@ -97,16 +97,15 @@ lift :: Builder ProtocolMessage
      -> Builder ProtocolMessage
 lift !bld !p = V.force $ V.snoc bld p
 
-randomPs :: Int -> PureMT -> V.Vector (Randomizer ProtocolMessage) -> ([V.Vector ProtocolMessage],PureMT)
+randomPs :: Int -> PureMT -> V.Vector (Randomizer ProtocolMessage) -> (V.Vector (V.Vector ProtocolMessage),PureMT)
 randomPs n seed vecs = let r =  V.sequence vecs 
                        in runRandomizer seed $ randomize' n r
 
 
 randomP :: V.Vector ProtocolType -> Either T.Text (V.Vector (Randomizer ProtocolMessage))
-randomP vec =  V.sequence 
-             $ V.map join 
-             $ V.map (\x -> withProtocol x 
-             $ (\prox -> Right $ randomizeProtocol prox)) vec 
+randomP vec =  --V.sequence 
+              V.force <$> V.mapM (join . (\x -> withProtocol x 
+             $ (\prox -> Right $ randomizeProtocol prox))) vec 
 
 {--
 setFields :: (Functor f, Foldable t) => t (ProtocolMessage -> ProtocolMessage) -> f ProtocolMessage -> f ProtocolMessage

@@ -29,11 +29,11 @@ import Control.Concurrent (threadDelay)
 arpServer :: TBQueue Message ->  DisplayChan -> StateT (TVar ARPCache) IO ()
 arpServer msgQ dChan = forever $ do 
     !nextMsg <- liftIO . atomically $ tryReadTBQueue msgQ
-    when (isJust nextMsg) $ do
-        let msg = snd $! fromJust nextMsg
-        let arped = V.force . V.map (as @ARPMessage ) . V.filter (is @ARPMessage) $  msg
-        s <- get 
-        liftIO $! V.mapM_ (updateARPCache s) (V.force arped)
+    case snd <$> nextMsg of 
+            Just msg ->  do
+            let arped = V.force . V.map (as @ARPMessage ) . V.filter (is @ARPMessage) $  msg
+            s <- get 
+            liftIO $! V.mapM_ (updateARPCache s) (V.force arped)
        -- liftIO $! atomically $! writeTChan dChan $! "ARP DID A PACKET!"
     liftIO $ threadDelay 1000
 

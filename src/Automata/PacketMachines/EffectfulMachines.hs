@@ -23,18 +23,20 @@ import UtilityMachines (getID', writeChan)
 import Control.Monad
 import Data.Machine.Lift
 import Control.Monad.Trans
-import PacketIO (dumpPacket)
+import PacketIO (atomicSendBS, dumpPacket)
 import GPrettyPrint ()
+import Network.Pcap
+import Serializer 
 import Data.Either
 import RecordFuncs (evalMsgSelExpPlus, evalMsgSelectorExp, evalProtoSelectExp)
 
 
-send :: DisplayChan -> SendChan -> PacketMachine
-send dchan chan =  repeatedly $ do
-    nextMsg <- await
-    liftIO . atomically . writeTChan chan $ nextMsg
+send :: DisplayChan -> TMVar () -> PcapHandle ->PacketMachine
+send dchan lock hdl =  repeatedly $ do
+    (hdr,nextMsg) <- await
+    liftIO $ atomicSendBS lock hdl $! serializeMessage nextMsg
    -- liftIO . atomically . writeTChan dchan $ "'send' is writing a packet to the send channel"
-    yield nextMsg
+    yield (hdr,nextMsg)
 
 
 

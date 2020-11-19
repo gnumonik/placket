@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings, ScopedTypeVariables, TypeApplications #-} 
 
 module SourceParser where 
@@ -36,18 +37,21 @@ generateS = lexeme $ try $ do
     void . lexeme $ string "repeat="
     rpts <-  lexeme $ many1 (satisfy isDigit)
     bld <- builder protocolBuilder
-    let ps = mapM PO.makeProtocolMessageV2 bld
+    let ps =  V.force <$> V.mapM PO.makeProtocolMessageV2 bld
     case ps of
             Left str -> return . return $! Left str
-            Right bldrOfLists -> do
-                let bldrs = map V.force $ sequence bldrOfLists
+            Right bldr -> do
                 return . return $! 
-                 Right $ Generator $ generator bldrs (Just $ read rpts :: Maybe Int) (Just $ read dly :: Maybe Int)
+                 Right $ Generator $ generator bldr (Just $ read rpts :: Maybe Int) (Just $ read dly :: Maybe Int)
 
 genRandomS :: SourceParser
 genRandomS = lexeme $ try $ do
     void . lexeme $ string "genRandoms"
     n <- int 
+    void . lexeme $ string "wait="
+    dly <-   int
+    void . lexeme $ string "repeat="
+    rpts <-  int
     b <- builder protocolType 
     let myVec = PO.randomP b
     case myVec of
@@ -55,8 +59,8 @@ genRandomS = lexeme $ try $ do
         Right vec -> return $ do
             s <- ask >>= \e' -> (liftIO . readTVarIO $ e') >>= \e -> 
                 return $ view randSeed e 
-            let (vecs, newSeed) = PO.randomPs n s vec
-            return $ Right . Generator $ generator vecs (Just 0) (Just 0)
+            let (!vecs, newSeed) = PO.randomPs n s vec
+            return $! Right . Generator $ generator vecs (Just rpts) (Just dly)
 
 
 
@@ -77,9 +81,9 @@ whyS = lexeme $ try $ do
 teaS :: SourceParser 
 teaS = lexeme $ try $ do
     lexeme $ try $ do
-        first <- lexeme $ (between (char '(') (char ')') sources) 
+        first <- lexeme $ (between (lexeme $ char '(') (lexeme $ char ')') sources) 
         void . lexeme $ string ":T:"
-        second <- lexeme $ (between (char '(') (char ')') sources) 
+        second <- lexeme $ (between (lexeme $ char '(') (lexeme $ char ')') sources) 
         return $ do
             m1 <- first
             m2 <- second

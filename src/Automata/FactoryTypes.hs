@@ -19,36 +19,29 @@ module FactoryTypes where
 import Control.Lens.TH 
 import Data.Machine
 import Classes
-import  Data.Default
 import PrimTypes 
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import LibTypes
-import Control.Monad 
-import RecordFuncs
-import PacketOperations hiding (setFields)
-import PrimParsers
-import Data.Char 
-import Data.Proxy
+
 import Data.Time.Clock 
-import Text.Parsec hiding (token)
-import Text.Parsec.Text 
-import Control.Monad.Extra 
-import Control.Lens 
-import Data.Word (Word32, Word16, Word64)
+import Control.Lens hiding (to, from)
+import IP4 
+import Data.Serialize
 import Control.Concurrent.STM
 import Data.Map.Strict (Map)
-import Wrappers 
 import Control.Monad.Trans.Reader
-import THWrappers (fromA, wrapP, WrapProtocol, Possibly)
-import Data.Kind (Type)
-import Data.Monoid
-import Data.Either (lefts)
-import Data.List (foldl')
+
 import Network.Pcap (PcapHandle, PktHdr)
 import System.IO (Handle)
 import System.Random.Mersenne.Pure64
 import Control.Concurrent.Async
+import Wrappers (as, is)
+import qualified Data.ByteString as BS
+import Data.Word
+import Generics.SOP 
+import Data.Maybe
+import Serializer (serializeMessage)
 
 -- MachineArrow: A data type that mirrors the structure of Packet Machine definitions. 
 -- Not strictly necessary, but useful in developing the parsers.
@@ -69,9 +62,89 @@ infixr 9 :~>
 infixr 9 :~+>
 infixr 9 :|
 
+class Checksum a where
+    mkChecksum :: V.Vector ProtocolMessage -> a -> a
+
+instance Checksum EthernetFrame where
+    mkChecksum _ = id
+
+instance Checksum ARPMessage where
+    mkChecksum _ = id 
+
+instance Checksum IP4Packet where
+    mkChecksum _ = makeIPv4Checksum
+
+instance Checksum ICMPMessage where
+    mkChecksum _ a = let raw = runPut . put $ set (icmpHdr . icmpChecksum) 0 a
+                         mySum = calcIPChecksum raw 
+                     in  set (icmpHdr . icmpChecksum) mySum a
+
+instance Checksum UDPMessage where
+    mkChecksum msg a = 
+        let maybeIP4 = foldr (\x y -> if isJust $ as @IP4Packet x then  as @IP4Packet x else y) Nothing msg
+        in case maybeIP4 of
+            Just ip -> 
+                let len = (\x -> fromIntegral x :: Word16) 
+                        . BS.length
+                        . serializeMessage
+                        $ V.reverse 
+                        . V.takeWhile (\x -> not $ is @UDPMessage x) 
+                        $ V.reverse msg 
+                    p :: forall a. Serialize a => a -> BS.ByteString
+                    p = runPut . put 
+                    pseudoHeader = BS.concat $ map (runPut . put) [p . unIP4 $ ip ^. i4Src 
+                                                                  ,p . unIP4 $ ip ^. i4Dst
+                                                                  ,p (0 :: Word8)
+                                                                  ,p (17 :: Word8) 
+                                                                  ,p len ]
+                in set uChecksum (calcIPChecksum . (pseudoHeader <>) . p $ set uLen len . set uChecksum 0 $ a) a 
+            Nothing -> a
+
+instance Checksum TCPSegment where
+    mkChecksum msg a = 
+        let maybeIP4 = foldr (\x y -> if isJust $ as @IP4Packet x then  as @IP4Packet x else y) Nothing msg
+        in case maybeIP4 of
+            Just ip -> 
+                let len = (\x -> fromIntegral x :: Word16) 
+                        . BS.length
+                        . serializeMessage
+                        $ V.reverse 
+                        . V.takeWhile (\x -> not $ is @TCPSegment x) 
+                        $ V.reverse msg 
+                    p :: forall a. Serialize a => a -> BS.ByteString
+                    p = runPut . put 
+                    pseudoHeader = BS.concat $ map (runPut . put) [p . unIP4 $ ip ^. i4Src 
+                                                                  ,p . unIP4 $ ip ^. i4Dst
+                                                                  ,p (0 :: Word8)
+                                                                  ,p (6 :: Word8) 
+                                                                  ,p len ]
+                in set tChecksum (calcIPChecksum . (pseudoHeader <>) . p $ set tChecksum 0 $ a) a 
+            Nothing -> a
+
+instance Checksum DNSMessage where
+    mkChecksum _ = id 
+
+instance Checksum MessageContent where
+    mkChecksum _ = id 
+
+apChecksum :: V.Vector ProtocolMessage -> V.Vector ProtocolMessage
+apChecksum msg = go msg msg
+    where
+        go :: V.Vector ProtocolMessage -> V.Vector ProtocolMessage -> V.Vector ProtocolMessage 
+        go vec acc = if V.null vec 
+            then acc
+            else let new = gChecksum vec (V.head vec) 
+                 in  new `V.cons`  go (V.tail vec) (new `V.cons` V.tail vec) 
+
+gChecksum :: (Generic a, AllN SOP Checksum (Code a), a ~ ProtocolMessage) 
+          => V.Vector ProtocolMessage 
+          -> ProtocolMessage
+          -> ProtocolMessage
+gChecksum vec = to . hcmap (Proxy @Checksum) (mapII $ mkChecksum vec) . from 
 
 data Factory a b c = Factory a b c
     deriving (Show, Eq)
+
 
 instance Functor MachineArrow where
     fmap f (a :~> as)  = f a :~> fmap f  as
@@ -190,6 +263,7 @@ data Environment = Environment  {_tagCount       :: !TagCount
                                 ,_packetMachines :: !(Map Int MachineData)
                                 ,_sourceIDs      :: !(Map T.Text SourceData)
                                 ,_pcapLock       :: !(TMVar ())
+                                ,_pcapHandle     :: !(PcapHandle)
                                 ,_serverQueue    :: !(TBQueue ToServer)
                                 ,_sendChan       :: !SendChan
                                 ,_displayChan    :: !DisplayChan
