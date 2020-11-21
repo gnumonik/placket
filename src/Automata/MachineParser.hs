@@ -32,7 +32,7 @@ import           Data.Proxy
 import           Data.Maybe
 import           Prelude hiding (until)
 import           FactoryTypes
-import           LibTypes
+import           FieldClasses
 import qualified Data.Map.Strict as Map
 import           PacketFilters
 import qualified PacketOperations as PO   
@@ -57,6 +57,8 @@ import EffectfulMachines
 import HigherOrderMachines
 import SelectorMachines 
 import Control.Lens (view, set, (^.), over)
+
+
 
 
 
@@ -168,14 +170,7 @@ getMachineByNameSTATE nm en
            (Left $ "\nError: No machine named " <> (mchName nm) <> " exists.\n") 
            $ Map.toList (en ^. packetMachines)
 
-experimentalSelect :: Parser (StateT MyParserState IO ParseOutput)
-experimentalSelect = lexeme $ try $ do
-    void . lexeme $ string "expSelect"
-    msgSel <- msgSelectorExp
-    let myPred = evalMsgSelectorExp Nothing msgSel
-    case myPred of
-        Right f -> return . return $ Right (select f, Nothing)
-        Left err -> return . return $ Left err 
+
 
 -- Formats parsec errors to be slightly less verbose.
 formatError :: ParseError -> T.Text 
@@ -200,6 +195,43 @@ prettyPrintR = lexeme $ try $ do
         d <- view (env . displayChan) <$> get
         return $! Right (prettyPrint d m,Nothing)
 
+printFieldR :: Parser (StateT MyParserState IO ParseOutput)
+printFieldR = lexeme $ try $ do
+    void . lexeme $ string "printField"
+    void . lexeme $ string "label="
+    l <- quotedString
+    void . lexeme $ string "mode=" 
+    m <- ppMode
+    ptype <- protocolType
+    ostr  <- opticStrings
+    return $ do
+        dchan <- view (env . displayChan) <$> get
+        let pfld = PO.apPrintField ptype ostr dchan m l
+        case pfld of
+            Left err -> return $ Left err
+            Right f -> return $ Right (doIO f,  Nothing)
+
+writeFieldR :: Parser (StateT MyParserState IO ParseOutput)
+writeFieldR = lexeme $ try $ do
+    void . lexeme $ string "writeField"
+    void . lexeme $ string "file="
+    fPath <- filePath 
+    void . lexeme $ string "label="
+    l <- quotedString
+    void . lexeme $ string "printMode="
+    pMode <- ppMode
+    pType <- protocolType
+    oStr  <- opticStrings
+    return $ do
+        dchan <- view (env . displayChan) <$> get
+        let wfld = PO.apWritePrim pType oStr dchan fPath pMode l
+        case wfld of
+            Left err -> return $ Left . T.pack . show $ err
+            Right f  -> return . Right $ (doIO f, Nothing)
+
+    
+
+    
 -- Utility parser. Parses predicates for a message (i.e. functions :: Message -> Maybe All). Not sure if I still need the monoid constraint to make the record selectors work, possibly can change to a simpler :: Message -> Maybe Bool function later on.
 
 msgPredicate :: Parser (Either T.Text Predicate)
@@ -299,8 +331,10 @@ modifyOptR :: Parser (StateT MyParserState IO ParseOutput)
 modifyOptR = lexeme $ try $ do
     void $ lexeme $ string "modifyOpt"
     tStr <- protocolType 
-    fStr <- lexeme $ many1 (satisfy (/= ' ')) 
+    fStr <- lexeme $ many1 (satisfy (/= ' '))
+    void . lexeme $ string "when" 
     fSel <- fieldSelectorExp 
+    void . lexeme $ string "changeTo"
     fBld <- fieldBuilder
     let myMod =  fmap liftMachine . join $ withOptionalField tStr (T.pack fStr) $
                     modifyOMatic fSel fBld
@@ -332,8 +366,17 @@ deleteOptR = lexeme $ try $ do
         Right del -> return . return $ Right (del,Nothing )
 ------
 -- Select and discard. Parse a predicate and return a machine that passes through packets that it is true of (select), or discards a packet that meets the predicate (discard). 
--- The BPF filters provided by libpcap won't work here, since we want to be able to use these operations on packets that have been deserialized in this application.
+-- The BPF filters provided by libpcap won't work here, since we want to be able to use these operations on packets that have been deserialized or generated in this application.
 ------
+
+experimentalSelect :: Parser (StateT MyParserState IO ParseOutput)
+experimentalSelect = lexeme $ try $ do
+    void . lexeme $ string "expSelect"
+    msgSel <- msgSelectorExp
+    let myPred = evalMsgSelectorExp Nothing msgSel
+    case myPred of
+        Right f -> return . return $ Right (select f, Nothing)
+        Left err -> return . return $ Left err 
 
 selectR :: Parser (StateT MyParserState IO ParseOutput)
 selectR = lexeme $ try $ do
@@ -415,6 +458,9 @@ reportR = lexeme $ try $ do
         s <- get
         let dChan = s ^. (env . displayChan)
         return $! Right (report str dChan,Nothing)
+
+
+
 
 ------
 -- Parser for "make". Make is *not* a source, but creates a packet (or set of packets)
@@ -678,7 +724,7 @@ limitR :: Parser (StateT MyParserState IO ParseOutput)
 limitR = lexeme $ try $ do
     void $ lexeme $ string "limit"
     n <- lexeme $ many1 $ satisfy isDigit
-    m' <- between (char '(') (char ')') machineArrow 
+    m' <- machineArrParens 
     let n' = read n :: Int 
     return $! do
         m <- subMachines m'
@@ -720,7 +766,7 @@ sendIt = lexeme $ try $ do
 machineName :: Parser MachineName
 machineName = lexeme $ try $ do
     mname  <- lexeme $ 
-        many1 (satisfy $ \x -> x `notElem` (" ()- ~ { } [ ] : = ' \" *!@#$%&)" :: [Char]))
+        many1 (satisfy $ \x -> isLetter x || isDigit x)
     return $ MachineName $ T.pack $ mname
 
 
@@ -764,6 +810,8 @@ machines = lexeme $ try $ do
         "push"        -> pushR
         "lift"        -> liftR
         "checksum"    -> chkSumR
+        "printField"  -> printFieldR
+        "writeField"  -> writeFieldR 
         _             -> machByName 
 
 
@@ -772,17 +820,18 @@ data NamedMachine = NamedMachine MachineName (MachineArrow T.Text) deriving (Sho
 
 factory :: Parser NamedMachine
 factory = lexeme $ try $ do
-    name   <- machineName
+    name   <- lexeme $ many1 (satisfy $ \x -> isLetter  x || isDigit x)
     void $ lexeme $ string "="
     mach <- machineArrow
-    return $! NamedMachine name mach 
+    return $! NamedMachine (MachineName . T.pack $ name) mach 
 
 machineArrParens :: Parser (MachineArrow T.Text)
 machineArrParens = lexeme $ try $ do
-    void . lexeme $ char '('
-    m <- machineArrow
-    void . lexeme $ char ')'
-    return m 
+    x <- recParens
+    let x' = T.drop 1 $ T.reverse  (T.drop 1 . T.reverse $ x) 
+    case parseLex machineArrow x' of
+        Left err -> fail $ show err
+        Right y -> return y 
 
 machineArrow :: Parser (MachineArrow T.Text)
 machineArrow = lexeme $ try $ do
@@ -814,7 +863,7 @@ voidEof = lexeme $ try $ do
 
 untilArr :: Parser T.Text
 untilArr = lexeme $ try $ do
-    first <- manyTill anyChar (lookAhead arrSymb <|> lookAhead (string "(") <|> voidEof)
+    first <- lexeme $ manyTill anyChar (lookAhead arrSymb <|> lookAhead (string "(") <|> voidEof)
     sep   <- voidEof <|>  (lookAhead $ lexeme . try $ string "(") <|>  (lookAhead arrSymb)
     case sep of
         "(" -> do
@@ -850,10 +899,10 @@ recParens = lexeme $ try $ do
         '(' -> do
             child <- many1 recParens
             rest  <- manyTill anyChar close 
-            return $ " (" <> T.pack first <> T.concat child <> T.pack rest <> ") " 
+            return $ "(" <> T.pack first <> T.concat child <> T.pack rest <> ")" 
         ')' -> do
             void . lexeme $ close 
-            return $ " (" <> T.pack first <> ") "
+            return $ "(" <> T.pack first <> ")"
 
 
    where
@@ -862,3 +911,15 @@ recParens = lexeme $ try $ do
 
        close :: Parser Char
        close = lexeme . try $ char ')'
+
+writeMode :: Parser WriteMode
+writeMode = wr <|> apnd
+    where
+        wr :: Parser WriteMode
+        wr = lexeme $ try $ do
+            void $ string "write"
+            return $ Write
+        apnd :: Parser WriteMode
+        apnd = lexeme $ try $ do
+            void $ string "append"
+            return $ Append

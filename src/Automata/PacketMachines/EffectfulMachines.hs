@@ -17,7 +17,7 @@ import Data.Machine
 import Control.Monad.Trans.State.Strict
 import Data.Time.Clock
 import System.IO
-import LibTypes 
+import FieldClasses 
 import Control.Monad.IO.Class
 import UtilityMachines (getID', writeChan)
 import Control.Monad
@@ -26,6 +26,7 @@ import Control.Monad.Trans
 import PacketIO (atomicSendBS, dumpPacket)
 import GPrettyPrint ()
 import Network.Pcap
+import Staging 
 import Serializer 
 import Data.Either
 import RecordFuncs (evalMsgSelExpPlus, evalMsgSelectorExp, evalProtoSelectExp)
@@ -38,6 +39,12 @@ send dchan lock hdl =  repeatedly $ do
    -- liftIO . atomically . writeTChan dchan $ "'send' is writing a packet to the send channel"
     yield (hdr,nextMsg)
 
+
+doIO :: (ProtocolMessage -> IO ()) -> PacketMachine 
+doIO f = repeatedly $ do 
+    (hdr,nextMsg) <- await
+    liftIO $ mapM_ f nextMsg 
+    yield (hdr,nextMsg)
 
 
 prettyPrint :: DisplayChan -> PrintMode -> PacketMachine

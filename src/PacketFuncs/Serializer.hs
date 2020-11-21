@@ -25,19 +25,17 @@
 module Serializer where
 
 import           Classes                          
-import           Control.Lens                     (Identity (runIdentity))
-import qualified Control.Monad.Trans.State.Strict as S
 import qualified Data.ByteString                  as BS
 import           Data.Proxy                       (Proxy (..))
 import           Data.Serialize                   
-import           Data.Serialize.Get
-import qualified Data.Map.Strict as Map
+
 import           Generics.SOP
-import           LibTypes                         
+import           FieldClasses     
+import           Staging                     
 import           NextProtocol
 import qualified Data.Vector as V
 import qualified Data.Text as T
-import           THWrappers                       
+import THWrappers ( Possibly(fromA) )                       
 
 
 genericGetNext :: 
@@ -65,7 +63,7 @@ genericGetNext pmsg = goSOP (from pmsg)
 {-# INLINE genericGetNext #-}
 
 incrementalDeserialize :: 
-                forall a. (Possibly a ProtocolMessage, WrapProtocol a, NextProtocol a, Serialize a) 
+                forall a. (Possibly a ProtocolMessage, NextProtocol a, Serialize a) 
                        => Proxy a
                        -> BS.ByteString 
                        -> V.Vector ProtocolMessage
@@ -74,7 +72,7 @@ incrementalDeserialize _ !bstr !acc = case runGetPartial (get @a) bstr of
     Fail !str _                -> Left . T.pack $ str
     Partial _                  -> Left $ "Error: Failed to deserialize."
     Done !result !remainingBS  -> 
-        deserializeNext (wrapP result) (V.force $! V.cons (wrapP result) acc) remainingBS
+        deserializeNext (fromA result) (V.force $! V.cons (fromA result) acc) remainingBS
 {-# INLINE incrementalDeserialize #-}
 
 deserializeNext :: ProtocolMessage 
@@ -91,7 +89,7 @@ deserializeNext !oldResult !acc' !inputBS
 
             Left someErr -> Left someErr 
 
-        Nothing ->  Right $! V.force $! V.cons (wrapP $ MessageContent inputBS) acc'  
+        Nothing ->  Right $! V.force $! V.cons (fromA $ MessageContent inputBS) acc'  
 {-# INLINE deserializeNext #-}
 
 gSerialize :: forall a. (Generic a, AllN SOP Serialize (Code a), a ~ ProtocolMessage) => a ->  BS.ByteString

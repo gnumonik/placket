@@ -31,6 +31,10 @@ import           Data.Proxy   (Proxy)
 import           Data.Tree
 import           Generics.SOP
 
+
+
+
+
  
 getDataTypeInfo :: forall a z. (Generic a, HasDatatypeInfo a, Code a ~ z) 
                 => Proxy a 

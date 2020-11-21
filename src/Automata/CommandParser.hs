@@ -33,9 +33,13 @@ import Control.Monad.State.Strict (execStateT)
 import Data.List (foldl')
 import Control.Monad
 import qualified Control.Exception as E 
+import Data.Hashable 
+import Data.Time.Clock.System 
+import Data.Word (Word16, Word32)
+import Numeric 
 
 
-type Command = MyReader ()
+type Command = MyReader () 
 
 commands :: Parser Command
 commands = lexeme $ try $ do
@@ -140,10 +144,12 @@ showMachines :: Parser Command
 showMachines = lexeme $ try $ do
     void . lexeme $ string "showMachines"
     return $! do
-        ms <- askForMachineIDs
+        ms <- map snd . Map.toList <$> askForMachineData
+        let pretty = foldr (\x acc -> x ^. schema
+                                 : acc) [] ms
         chan <- askForDisplayChan 
         let myMachineIDs = formatList "\nAvailable machines: " 
-                $ map (mchName . snd) ms
+                $ pretty
         liftIO $ atomically $ writeTChan chan myMachineIDs
 
 
@@ -152,8 +158,9 @@ showSources = lexeme $ try $ do
     void . lexeme $ string "showSources"
     return $! do
         ss <- askForSourceIDs
+        let pretty = foldr (\x acc -> fst x <> " :: " <> (snd x) ^. srcSchema : acc) [] $ Map.toList ss
         chan <- askForDisplayChan  
-        let mySourceIDs = formatList "\nAvailable sources: " $ map fst $ Map.toList ss
+        let mySourceIDs = formatList "\nAvailable sources: " $ pretty
         liftIO . atomically . writeTChan chan $ mySourceIDs
 
 
@@ -163,7 +170,7 @@ run'  = lexeme $ try $ do
     void $ lexeme $ string "run:"
     pSrc' <- sources 
     void $ lexeme (string ">>")
-    mname <- machineName
+    machine <- many1 anyChar 
     return $! do
         pSrc <- pSrc'
         dChan <- askForDisplayChan
@@ -172,7 +179,11 @@ run'  = lexeme $ try $ do
 
                 liftIO . atomically . writeTChan dChan $ err
             Right src -> do
-                mach <- getMachineDataByName mname 
+                t <- askForTagCount
+                newName <- mkRandomName t 
+                let mySchema = newName <> " = "  <> (T.pack machine)
+                machineBuilder mySchema 
+                mach <- getMachineDataByName (MachineName $ newName)
 
                 case mach of
                     Right mach' -> do
@@ -191,7 +202,7 @@ run'  = lexeme $ try $ do
                                 liftIO . atomically . writeTBQueue sq $ GIMMEPACKETS (fromJust tag) sourceQs
 
                                 writeChan dChan  $! 
-                                    "Success! Activated machine: " <> (mchName mname)
+                                    "Success! Activated machine: " <> newName 
                                 
                                 activateMachine (fromJust tag) async1 
                                 
@@ -275,19 +286,13 @@ kill myData = do
 
 -- utility parsers
 -- Some of this stuff should really be in another module, but here is the best place for avoiding  cyclinc imports. Will fix later. 
-data WriteMode = Write | Append
 
-writeMode :: Parser WriteMode
-writeMode = wr <|> apnd
-    where
-        wr :: Parser WriteMode
-        wr = lexeme $ try $ do
-            void $ string "write"
-            return $ Write
-        apnd :: Parser WriteMode
-        apnd = lexeme $ try $ do
-            void $ string "append"
-            return $ Append
+mkRandomName :: Int -> MyReader (T.Text)
+mkRandomName n = do
+    MkSystemTime _ w <- liftIO getSystemTime
+    let mahHash = fromIntegral (hashWithSalt (fromIntegral w) n) :: Word16
+    let mahHex = T.pack $ showHex mahHash $ ""
+    return mahHex 
 
 all' :: Parser T.Text
 all' = lexeme $ try $ do
@@ -299,18 +304,21 @@ list p = lexeme $ try $ do
     parsed <- p
     return $! [parsed]
 
-unbracket :: Parser T.Text
-unbracket = lexeme $ try $ do
+unbracket :: Parser a -> Parser a
+unbracket p = lexeme $ try $ do
     option () spaces 
     void . lexeme $ char '{'
-    manyTill anyChar (char '}') >>= \x -> return $ T.pack x 
+    parsed <- p
+    void . lexeme $ char '}'
+    return parsed 
     
 
 parseDefs :: Parser (MyReader ())
 parseDefs = lexeme $ try $ do 
     void $ try spaces
     def <- defs
-    case mapM (parseLex (sortInput =<< unbracket)) def of
+    let p = sortInput
+    case mapM (parseLex p) def of
         Left err -> return $ do
             d <- askForDisplayChan
             writeChan d $ T.pack (show err)
@@ -321,8 +329,8 @@ parseDefs = lexeme $ try $ do
                     SourceDef y  -> acc ) [] sorted
             let srcDefs = foldr (\x acc-> case x of
                     Command y -> acc 
-                    MachineDef y -> y : acc
-                    SourceDef y  -> acc ) [] sorted
+                    MachineDef y -> acc
+                    SourceDef y  -> y : acc ) [] sorted
             return $ do
                 d <- askForDisplayChan 
                 mapM_ (\x -> writeChan d $ (x <> "\n"))    mchDefs 
@@ -358,10 +366,12 @@ sortInput = sourceDef <|> machineDef <|> userCommand
 data NamedSource = NamedSource T.Text PacketSource
 
 defs :: Parser [T.Text]
-defs = many1 go 
+defs = manyTill go eof  
     where 
         go = lexeme $ try $ do
-            t <- between (lexeme $ char '{') (lexeme $ char '}') (many1 anyChar )
+            void . lexeme $ char '{'
+            t <- many1 $ satisfy (/= '}')
+            eof <|> (void $ many (satisfy (/= '{')) )
             return . T.pack $ t 
 
 splitEq :: Parser (T.Text, T.Text)

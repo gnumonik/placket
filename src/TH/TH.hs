@@ -90,13 +90,13 @@ instancesToStrings name = do
   where
       gimme aStr = (++ "_M") . reverse . takeWhile (/= '.') . reverse $ aStr
 
---instancesToNames :: Name -> Q
+
 -- Automagically generates a wrapper sum type for every instance of the class "IsNetworkProtocol". If e.g. EthernetFrame and ARPMessage are instances of the class, then this function will generate a type:
 --         ProtocolMessage' = EthernetFrame_M EthernetFrame | ARPMessage_M ARPMessage
 
 
-mkNetworkProtocols ::  Q [Dec]
-mkNetworkProtocols   = do
+mkProtocolMessageSum ::  Q [Dec]
+mkProtocolMessageSum  = do
     myInstanceTypes <- instancesToTypes ''IsNetworkProtocol
     myWrapperNames <- instancesToSumTypeWrappers ''IsNetworkProtocol
     let myTypeNames = myInstanceTypes

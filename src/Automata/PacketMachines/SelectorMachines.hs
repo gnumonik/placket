@@ -3,7 +3,7 @@ module SelectorMachines where
 
 
 import qualified Data.Vector as V
-import LibTypes (ProtocolMessage)
+import Staging
 import FactoryTypes (Predicate, PacketMachine)
 import Data.Machine
 import Control.Monad

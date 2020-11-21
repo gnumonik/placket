@@ -33,22 +33,61 @@ import           THAlias
 import           THDefaults
 import           Control.Monad.IO.Class ()
 import           TH
-import           THPrettyPrint
+import THWrappers 
 import           Language.Haskell.TH
+import FieldClasses 
+import THRecords
+import THOptional
+import THUtils
+import THAlias (mkAlias)
+import THDefaults (deriveDefault)
+import TH 
 
+masterDeriver1 :: DecsQ
+masterDeriver1 = do
+    myTypes <- getAllProtocols
+    concat <$> mapM  mkProtocol  myTypes
+    concat <$> mapM deriveStringyLens myTypes 
+    mkProtocolMessageSum
+    mkPossiblyInstances 
+    concat <$> mapM deriveOptionalField myTypes
+
+     
+-- mkProtocolWrappers after this
+
+aliases :: DecsQ
+aliases = do
+   ns <- getAllProtocols
+   concat <$> mapM mkAlias ns
+
+defaults :: DecsQ
+defaults = do
+   ns <- getAllProtocols
+   concat <$> mapM deriveDefault ns
+
+isNetworkProtocol :: DecsQ 
+isNetworkProtocol = do 
+   ns <- getAllProtocols
+   concat <$> mapM deriveIsNetworkProtocol ns
+
+stringyLens :: DecsQ
+stringyLens = do
+   ns <- getAllProtocols
+   concat <$> mapM deriveStringyLens ns 
+
+optionalFields :: DecsQ
+optionalFields = do
+   ns <- getAllProtocols
+   concat <$> mapM deriveOptionalField ns 
 
 
 
 
 mkProtocol :: Name -> DecsQ
 mkProtocol name = do
-   -- generic            <- deriveGeneric name
     alias              <- mkAlias name
     defaults           <- deriveDefault name
-    --prettyprint        <- mkPrettyPrint name
     isnetworkprotocol  <- deriveIsNetworkProtocol name
-    --containers         <- deriveIsContainer name
-   -- parsers            <- mkFieldParsersV2 name
-    return $  defaults ++ {-- prettyprint ++ --} isnetworkprotocol ++  alias
+    return $  defaults <> isnetworkprotocol <>  alias
 
 

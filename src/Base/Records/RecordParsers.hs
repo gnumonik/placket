@@ -24,9 +24,11 @@ protocolType = lexeme $ try $ do
 
 -- Predicate parser. 
 -----
+betweenPs :: Parser a -> Parser a 
+betweenPs p = between (lexeme $ char '(') (lexeme $ char ')') p
 
 predicate :: Parser a -> Parser (Predicate' a)
-predicate p = parseATOM p <|> parseOR p <|> parseAND p <|> parseNOT p  
+predicate p =  (parseOR p) <|> (parseAND p) <|> parseNOT p <|> (parseATOM p) 
     where
         parseATOM prsr = lexeme $ try $ do
             parsed <- prsr
@@ -34,23 +36,19 @@ predicate p = parseATOM p <|> parseOR p <|> parseAND p <|> parseNOT p
         
         parseNOT prsr = lexeme $ try $ do
             void $ lexeme $ string "not"
-            parsed <- parseAND prsr <|> parseOR prsr <|> parseNOT prsr <|> parseATOM prsr
+            parsed <- betweenPs (parseAND prsr <|> parseOR prsr) <|> parseNOT prsr <|> parseATOM prsr  
             return $! NOT parsed
 
         parseAND prsr = lexeme $ try $ do
-            void $ lexeme $ char '('
-            first <- parseAND prsr <|> parseOR prsr <|> parseNOT prsr <|> parseATOM prsr 
+            first <- betweenPs (parseAND prsr <|> parseOR prsr) <|> parseNOT prsr <|> parseATOM prsr 
             void $ lexeme $ string "&&"
-            second <- parseAND prsr <|> parseOR prsr <|> parseNOT prsr <|> parseATOM prsr 
-            void $ lexeme $ char ')'
+            second <- betweenPs (parseAND prsr <|> parseOR prsr) <|> parseNOT prsr <|> parseATOM prsr 
             return $! first :&&: second
 
         parseOR prsr = lexeme $ try $ do
-            void $ lexeme $ char '('
-            first <- parseAND prsr <|> parseOR prsr <|> parseNOT prsr <|> parseATOM prsr 
+            first <- betweenPs (parseAND prsr <|> parseOR prsr) <|> parseNOT prsr <|> parseATOM prsr 
             void $ lexeme $ string "||"
-            second <- parseAND prsr <|> parseOR prsr <|> parseNOT prsr <|> parseATOM prsr 
-            void $ lexeme $ char ')'
+            second <- betweenPs (parseAND prsr <|> parseOR prsr) <|> parseNOT prsr <|> parseATOM prsr 
             return $! first :||: second
 
 -- Parses a list used as a record selector dictionary 

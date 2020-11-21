@@ -2,7 +2,8 @@ module BuilderMachines where
 
 
 import qualified Data.Vector as V
-import LibTypes (Builder, ProtocolMessage)
+import FieldClasses (Builder)
+import Staging
 import FactoryTypes (Message, PacketMachine, Delay, Repeats)
 import Data.Machine
 import Control.Monad.Trans.State.Strict

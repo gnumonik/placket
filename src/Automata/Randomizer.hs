@@ -12,22 +12,77 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Randomizer where
 
-import System.Random.Mersenne.Pure64
-import Control.Monad
+import System.Random.Mersenne.Pure64 ( randomWord, PureMT )
 import Control.Monad.State.Strict
-
-
+    ( MonadState(put, get), evalState, execState, runState )
 import PrimTypes
+    ( dhAnCount,
+      dhArCount,
+      dhNsCount,
+      dhQdCount,
+      icmpType,
+      tOpKind,
+      tOpLen,
+      ARPMessage,
+      AddressMaskReply,
+      AddressMaskRequest,
+      ControlFlags,
+      DNSAdd,
+      DNSAnswer,
+      DNSAuth,
+      DNSHeader,
+      DNSMessage(DNSMessage),
+      DNSQuestion,
+      DNSRR(DNSRR),
+      DestUnreachable,
+      EchoReply,
+      EchoRequest,
+      EthernetFrame,
+      ICMPData(TR, AMRP, AMRQ, TSRP, TSRQ, PP, TE, RS, RA, ERQ, RD, SQ,
+               DU, ERP),
+      ICMPHeader(ICMPHeader),
+      ICMPMessage(ICMPMessage),
+      IP4Packet,
+      IPFlags,
+      Option(Option),
+      OptionType,
+      ParamProblem,
+      RData(..),
+      RR_CNAME,
+      RR_MX,
+      RR_NS,
+      RR_PTR,
+      RR_SOA,
+      RR_TXT(RR_TXT),
+      Redirect,
+      RouterAdvertisement,
+      RouterSolicitation,
+      SourceQuench,
+      TCPOption(TCPOption),
+      TCPSegment(TCPSegment),
+      TimeExceeded,
+      TimeStampReply,
+      TimeStampRequest,
+      TraceRoute,
+      UDPMessage )
 import Classes
-import Control.Lens hiding (from, to)
-import Data.Word  
+    ( DNSLabel(DNSLabel),
+      DNSName(DNSName),
+      DNSNameLength(..),
+      Flag(Flag),
+      IP4Address(IP4Address),
+      MacAddr(MacAddr),
+      MessageContent(MessageContent),
+      Randomize(..),
+      Randomizer,
+      Word24(..) )
+import Control.Lens ( (^.) )
+import Data.Word ( Word8, Word16, Word32 )  
 import qualified Data.ByteString as BS
 import qualified Data.Vector as V 
-import Generics.SOP 
-import Data.Bits
-
-import THRandom
-import qualified Data.Text as T
+import Generics.SOP () 
+import Data.Bits ( Bits((.&.)) )
+import THRandom ( deriveRandomize, gRandom )
 
 
 

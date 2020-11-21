@@ -12,8 +12,9 @@
 
 module PacketOperations where
 
-import           Aliases         
-import           LibTypes
+
+import           Staging         
+import           FieldClasses
 
 import           Classes         
 import           Control.Lens    (ASetter', Getting, set')
@@ -26,15 +27,21 @@ import           MessageBuilders (applySetters)
 import           PacketFilters
 import           PrimTypes
 import           THRecords
-import           THWrappers      (fromA, isA, Possibly, WrapProtocol (..))
+import           THWrappers      (fromA, isA, Possibly)
 import           Wrappers        
 import           RecordFuncs
 import           RecordTypes  
 import           Randomizer 
 import           MessageBuilders
 import Control.Monad
+import Control.Concurrent.STM ( atomically, writeTChan, TChan ) 
 import System.Random.Mersenne.Pure64
- 
+import qualified Data.Text.IO as TIO  
+import Control.Exception as E 
+import FactoryTypes 
+import THPrettyPrint 
+
+
 
 
 makeProtocolMessage :: forall a. (Possibly a ProtocolMessage, Default a) 
@@ -76,6 +83,43 @@ cut !_ !bld = let cutD = V.force $! V.filter (\x -> not $ is @a x) bld
 apRand :: ProtocolType -> [T.Text] -> Int -> PureMT -> Either T.Text (ProtocolMessage -> [ProtocolMessage])
 apRand tstr ostrs n seed = withProtocol tstr $ \prox -> liftUpdate $  update prox ostrs (randomPrim n seed) 
 
+apWritePrim :: ProtocolType 
+            -> OpticStrs
+            -> DisplayChan 
+            -> FilePath 
+            -> PrintMode 
+            -> T.Text 
+            -> Either T.Text (ProtocolMessage -> IO ())
+apWritePrim pType oStrs dChan fPath pMode  lbl =
+     withProtocol pType $ \proxA -> liftApIO $ applyTo proxA oStrs (writePrim dChan fPath pMode  lbl)  
+
+writePrim :: forall b. (Primitive b, PrettyPrint b) => DisplayChan -> FilePath -> PrintMode -> T.Text -> Proxy b -> Either T.Text (b -> IO ())
+writePrim dChan fPath pMode  lbl _ = Right $ \x -> do
+     let toPrint = lbl <> pprint pMode x <> "\n"
+     (a :: Either IOError ()) <- E.try (TIO.appendFile fPath toPrint)
+     case a of
+          Right _ -> return ()
+          Left err -> atomically . writeTChan dChan $ T.pack . show $ err 
+
+
+
+apPrintField :: ProtocolType -> OpticStrs -> TChan T.Text -> PrintMode -> T.Text -> Either T.Text (ProtocolMessage ->  IO ())
+apPrintField tstr ostrs chan mode txt = withProtocol tstr $ \prox -> liftApIO $ applyTo prox ostrs (printPrim chan mode txt)
+
+
+liftApIO :: forall s. Possibly s ProtocolMessage => Either T.Text (s -> Maybe (IO ()) ) -> Either T.Text (ProtocolMessage -> IO () )
+liftApIO f' = case f' of
+     Right f ->  Right $ \p -> case (as @s >=> f) p of
+          Just io -> do io
+          Nothing -> return () 
+     Left err -> Left err 
+
+
+printPrim :: forall a. (Primitive a) => TChan T.Text -> PrintMode -> T.Text ->  Proxy a -> Either T.Text (a ->  IO () )
+printPrim chan mode txt _ = Right $ \x -> atomically . writeTChan chan $ txt <> ": " <> pprint mode x 
+
+ioPrim :: forall a. Primitive a => (a -> IO ()) -> Proxy a -> Either T.Text (a ->  (IO ()))
+ioPrim f _ = Right $ \a ->  f a 
 
 
 randomizeProtocol :: forall a. (Randomize a, Possibly a ProtocolMessage) => Proxy a -> Either T.Text (Randomizer ProtocolMessage)

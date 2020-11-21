@@ -26,18 +26,17 @@
 module GPrettyPrint where 
 import PrettyPrint 
 import PrimTypes 
-import LibTypes
+import FieldClasses
 import Control.Lens hiding (from)
 import Data.Proxy 
 import GenericFunctions 
-import Wrappers 
+import Staging
 import Classes
 import Generics.SOP
 import Data.Char
-import THRecords (formatLens)
 import qualified Data.Text as T 
 
-formatRecord:: String -> String
+formatRecord :: String -> String
 formatRecord  nm =  case dropWhile (\x -> isLower x || isDigit x || x == '_') $ nm of
     (x : xs) -> toLower x : xs
     ys       -> ys
@@ -286,4 +285,3 @@ instance PrettyPrint ProtocolMessage where
                                      <> (makeDataRow [pprint m y])
                                      <> dashRow 
 
-     

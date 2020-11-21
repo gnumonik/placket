@@ -19,7 +19,7 @@ import Control.Lens
 import Data.Word ()
 import Data.Time.Clock
 import qualified Data.Text as T 
-import LibTypes
+import FieldClasses
 import IP4 
 import Control.Monad.IO.Class
 import Control.Concurrent (threadDelay)
@@ -31,9 +31,10 @@ arpServer msgQ dChan = forever $ do
     !nextMsg <- liftIO . atomically $ tryReadTBQueue msgQ
     case snd <$> nextMsg of 
             Just msg ->  do
-            let arped = V.force . V.map (as @ARPMessage ) . V.filter (is @ARPMessage) $  msg
-            s <- get 
-            liftIO $! V.mapM_ (updateARPCache s) (V.force arped)
+                let arped = V.force . V.map (as @ARPMessage ) . V.filter (is @ARPMessage) $  msg
+                s <- get 
+                liftIO $! V.mapM_ (updateARPCache s) (V.force arped)
+            Nothing -> return () 
        -- liftIO $! atomically $! writeTChan dChan $! "ARP DID A PACKET!"
     liftIO $ threadDelay 1000
 

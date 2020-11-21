@@ -22,8 +22,8 @@ import Classes
 import PrimTypes 
 import qualified Data.Text as T
 import qualified Data.Vector as V
-import LibTypes
-
+import FieldClasses
+import Staging 
 import Data.Time.Clock 
 import Control.Lens hiding (to, from)
 import IP4 
@@ -42,7 +42,12 @@ import Data.Word
 import Generics.SOP 
 import Data.Maybe
 import Serializer (serializeMessage)
+import RecordTypes
+import Data.Kind (Type)
+import Unsafe.Coerce
 
+
+data WriteMode = Write | Append
 -- MachineArrow: A data type that mirrors the structure of Packet Machine definitions. 
 -- Not strictly necessary, but useful in developing the parsers.
 -- Note: Might be able to simplify the parser if I gave it a traversable instance.
@@ -52,6 +57,20 @@ data MachineArrow a =
   | a :~+> [MachineArrow a]
   | a :| () deriving (Eq)
 
+instance Functor MachineArrow where
+    fmap f (a :~> as)  = f a :~> fmap f  as
+    fmap f (a :~+> as) = f a :~+> map (fmap f) as
+    fmap f (a :| ())   = f a :| ()
+
+machArrToList :: MachineArrow a -> [a]
+machArrToList mArr = case mArr of
+    (a :| ())   -> [a]
+    (a :~> as)  -> a : machArrToList as
+    (a :~+> as) -> a : concatMap machArrToList as
+
+instance Foldable MachineArrow where
+    foldr f e mArr = let mArr' = machArrToList mArr
+                     in foldr f e mArr'
 
 instance Show a => Show (MachineArrow a) where
     show (a :~>  bs) = show a <> " ~> " <> show bs
@@ -61,6 +80,9 @@ instance Show a => Show (MachineArrow a) where
 infixr 9 :~>
 infixr 9 :~+>
 infixr 9 :|
+
+-- Move this somewhere 
+----
 
 class Checksum a where
     mkChecksum :: V.Vector ProtocolMessage -> a -> a
@@ -142,24 +164,10 @@ gChecksum :: (Generic a, AllN SOP Checksum (Code a), a ~ ProtocolMessage)
           -> ProtocolMessage
 gChecksum vec = to . hcmap (Proxy @Checksum) (mapII $ mkChecksum vec) . from 
 
-data Factory a b c = Factory a b c
-    deriving (Show, Eq)
 
 
-instance Functor MachineArrow where
-    fmap f (a :~> as)  = f a :~> fmap f  as
-    fmap f (a :~+> as) = f a :~+> map (fmap f) as
-    fmap f (a :| ())   = f a :| ()
 
-machArrToList :: MachineArrow a -> [a]
-machArrToList mArr = case mArr of
-    (a :| ())   -> [a]
-    (a :~> as)  -> a : machArrToList as
-    (a :~+> as) -> a : concatMap machArrToList as
 
-instance Foldable MachineArrow where
-    foldr f e mArr = let mArr' = machArrToList mArr
-                     in foldr f e mArr'
 
 
 -- Misc. Type Synonyms
@@ -255,6 +263,91 @@ type ErrorLog = [ProgramError]
 
 
 data ARPServerCmd = PrintARPTables | ResetARPCache deriving (Eq, Show)
+
+
+-- Types for expanding the dsl. Not yet implemented. 
+-----
+data ArgType
+    = ArgInt -- Int
+    | ArgPType -- T.Text 
+    | ArgMaybeInt -- Maybe Int 
+    | ArgPrintMode -- PrintMode
+    | ArgWriteMode -- WriteMode 
+    | ArgQuotedString --T.Text
+    | ArgOpticString -- [T.Text]
+    | ArgFilePath -- FilePath
+    | ArgPSelExp -- ProtocolSelectorExp  
+    | ArgProtoBuilder -- ProtocolBuilder
+    | ArgFieldBuilder -- FieldBuilder
+    | ArgFieldType -- T.Text
+    | ArgFieldSelExp -- FieldSelectorExp
+    | ArgMsgSelExp --- MsgSelectorExp 
+    | ArgMachine -- (MachineArrow T.Text)
+    | ArgTime -- Int
+    | ArgCases -- (Predicate, MachineArrow T.Text)
+    | ArgDouble -- Double
+    | ArgMsgSelExpPlus -- MsgSelectorExp
+    | ArgPcapLock      -- TMVar () 
+    | ArgPcapHandle    -- PcapHandle
+    | ArgDumpHandle    -- Handle 
+    | ArgDisplayChan  deriving (Show, Eq) -- DisplayChan 
+
+
+newtype PType =  PType T.Text
+newtype QuotedString =  QuotedString T.Text
+newtype MachineSchema = MachineSchema (MachineArrow T.Text)
+newtype OpticStrings = OpticStrings [T.Text]
+newtype Time         = Time Int 
+newtype FieldType = FieldType T.Text
+newtype MsgSelectorExpPlus = MsgSelectorExpPlus MsgSelectorExp
+newtype Cases = Cases (Predicate,MachineArrow T.Text)
+
+type ArgExp = (ArgType, Arg I)
+
+data Arg (f :: k -> Type) where
+    Arg :: f t -> Arg f
+
+class CoerceArg a where
+    coerceArg :: Proxy a -> Arg I -> a
+    coerceArg _ (Arg (I x)) = unsafeCoerce x :: a
+
+instance CoerceArg a 
+
+withArgType :: ArgType -> Arg I -> (forall a. CoerceArg a => ArgType -> a -> b) -> b 
+withArgType aType arg f =  case aType of
+    ArgInt           -> f ArgInt           $ coerceArg (Proxy @Int) arg 
+    ArgPType         -> f ArgPType         $ coerceArg (Proxy @PType) arg 
+    ArgMaybeInt      -> f ArgMaybeInt      $ coerceArg (Proxy @PType) arg 
+    ArgPrintMode     -> f ArgPrintMode     $ coerceArg (Proxy @PrintMode)  arg
+    ArgWriteMode     -> f ArgWriteMode     $ coerceArg (Proxy @WriteMode) arg
+    ArgQuotedString  -> f ArgQuotedString  $ coerceArg (Proxy @QuotedString) arg  
+    ArgOpticString   -> f ArgOpticString   $ coerceArg (Proxy @OpticStrings) arg
+    ArgFilePath      -> f ArgFilePath      $ coerceArg (Proxy @FilePath) arg 
+    ArgPSelExp       -> f ArgPSelExp       $ coerceArg (Proxy @ProtocolSelectorExp) arg
+    ArgProtoBuilder  -> f ArgProtoBuilder  $ coerceArg (Proxy @ProtocolBuilder) arg
+    ArgFieldBuilder  -> f ArgFieldBuilder  $ coerceArg (Proxy @FieldBuilder) arg 
+    ArgFieldType     -> f ArgFieldType     $ coerceArg (Proxy @FieldType) arg
+    ArgFieldSelExp   -> f ArgFieldSelExp   $ coerceArg (Proxy @FieldSelectorExp)
+    ArgMsgSelExp     -> f ArgMsgSelExp     $ coerceArg (Proxy @MsgSelectorExp) arg
+    ArgMachine       -> f ArgMachine       $ coerceArg (Proxy @(MachineArrow T.Text)) arg
+    ArgTime          -> f ArgTime          $ coerceArg (Proxy @Time) arg
+    ArgCases         -> f ArgCases         $ coerceArg (Proxy @Cases) arg
+    ArgDouble        -> f ArgDouble        $ coerceArg (Proxy @Double) arg 
+    ArgMsgSelExpPlus -> f ArgMsgSelExpPlus $ coerceArg (Proxy @MsgSelectorExpPlus) arg
+    ArgPcapLock      -> f ArgPcapLock      $ coerceArg (Proxy @(TMVar ())) arg
+    ArgPcapHandle    -> f ArgPcapHandle    $ coerceArg (Proxy @PcapHandle) arg
+    ArgDumpHandle    -> f ArgDumpHandle    $ coerceArg (Proxy @Handle) arg
+    ArgDisplayChan   -> f ArgDisplayChan   $ coerceArg (Proxy @DisplayChan) arg 
+    
+
+
+
+newtype MachineArg = MachineArg (forall a. a -> ArgType -> Type) 
+
+data MachineBuilder = MachineBuilder {_mbNm   :: T.Text
+                                     ,_mbMch  :: [ArgType] -> [ArgExp] -> Either T.Text PacketMachine
+                                     ,_mbArgs :: [ArgType]
+                                     ,_mbEnvF :: [Environment -> Environment]}
 
 
 

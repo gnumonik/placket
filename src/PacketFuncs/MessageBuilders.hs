@@ -26,9 +26,10 @@ import           Classes
 import           Data.Default
 import           Data.List
 import           Data.Proxy
-import           LibTypes
+import           FieldClasses
 import           PrimTypes
 import           THWrappers
+import Staging 
 import           Wrappers
 import qualified Data.Vector as V
 import qualified Data.Text as T

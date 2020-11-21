@@ -1,41 +1,12 @@
-{-# LANGUAGE AllowAmbiguousTypes       #-}
-{-# LANGUAGE ConstraintKinds           #-}
-{-# LANGUAGE DataKinds                 #-}
-{-# LANGUAGE DeriveDataTypeable        #-}
-{-# LANGUAGE DeriveFunctor             #-}
-{-# LANGUAGE DeriveGeneric             #-}
-{-# LANGUAGE DeriveLift                #-}
-{-# LANGUAGE DerivingStrategies        #-}
-{-# LANGUAGE FlexibleContexts          #-}
-{-# LANGUAGE FlexibleInstances         #-}
-{-# LANGUAGE FunctionalDependencies    #-}
-{-# LANGUAGE GADTs                     #-}
-{-# LANGUAGE KindSignatures            #-}
-{-# LANGUAGE LambdaCase                #-}
-{-# LANGUAGE MagicHash                 #-}
-{-# LANGUAGE MultiParamTypeClasses     #-}
-{-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE PolyKinds                 #-}
-{-# LANGUAGE QuantifiedConstraints     #-}
-{-# LANGUAGE RankNTypes                #-}
-{-# LANGUAGE ScopedTypeVariables       #-}
-{-# LANGUAGE TemplateHaskell           #-}
-{-# LANGUAGE TupleSections             #-}
-{-# LANGUAGE TypeApplications          #-}
-{-# LANGUAGE TypeFamilies              #-}
-{-# LANGUAGE TypeOperators             #-}
-{-# LANGUAGE UndecidableInstances      #-}
-{-# LANGUAGE UndecidableSuperClasses   #-}
+{-# LANGUAGE TemplateHaskell #-}
+
 
 module THUtils where
 
-import           PrimParsers
 
 import           Classes
-import           Control.Monad.Extra
 import           Data.Char
 import           Data.Maybe
-import qualified Data.Vector                as V
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Syntax
 import           TH
@@ -160,3 +131,12 @@ getAliasPair n = do
     case mabAlias of
         Just al -> return . Just $ (n,al) 
         Nothing -> return Nothing 
+
+getAllProtocols :: Q [Name]
+getAllProtocols = do
+    instances <- getInstances ''Alias
+    return $ concatMap go instances
+   where
+         go (InstanceD _ _ x _) = case x of
+             (AppT (AppT (ConT _) (ConT x )) (ConT _)) -> [x]
+             _                                         -> []

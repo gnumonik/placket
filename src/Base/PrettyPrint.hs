@@ -23,13 +23,13 @@ spaces :: TL.Text
 spaces = TL.repeat ' '
 
 dots  :: TL.Text
-dots   = TL.repeat '.'
+dots   = TL.intersperse ' ' $ TL.repeat '-'
 
 dashRow :: T.Text
 dashRow = "|" <> TL.toStrict (TL.take 78 dashes) <> "|\n"
 
 dotRow :: T.Text 
-dotRow = "|" <> TL.toStrict (TL.take 78 dots) <> "|\n"
+dotRow = "|" <> TL.toStrict ( TL.take 78 $ TL.intersperse ' ' dots) <> "|\n"
 {--
 testPrettyPrint :: IO ()
 testPrettyPrint = do

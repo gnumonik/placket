@@ -22,7 +22,7 @@ import Serializer
 import FactoryTypes
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async)
-import LibTypes (ProtocolMessage)
+import Staging
 import qualified Data.Text as T
 import UtilityMachines (writeChan)
 

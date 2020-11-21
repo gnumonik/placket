@@ -1,14 +1,15 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RankNTypes, ScopedTypeVariables, TypeApplications, OverloadedStrings #-}
+{-# LANGUAGE RankNTypes, ScopedTypeVariables, TypeApplications, OverloadedStrings, TemplateHaskell #-}
 
 module OptionalFields where 
 
 import Classes
 import Data.Default
 import PrimTypes
-import LibTypes
+import Staging
+import FieldClasses
 import Wrappers
 import THWrappers
 import Data.Proxy
@@ -22,15 +23,13 @@ import Control.Monad
 import Data.List (foldl')
 import Data.Either (lefts)
 import Data.Monoid
+import THOptional
 
 
 
-class (IsNetworkProtocol a, Default b, StringyLens a, StringyLens b) 
-    => OptionalFieldOf a b where
-        insertField   :: a -> [b] -> a
-        deleteFieldIf :: (b -> Bool) -> a -> a
-        modifyFieldIf :: a -> (b -> Bool) -> (b -> [b]) -> a 
 
+
+{--
 instance OptionalFieldOf IP4Packet Option where
     insertField ip opt   = over i4Opts (<> opt) ip
     deleteFieldIf f ip   = over i4Opts (filter $ \x -> not . f $ x ) ip
@@ -60,7 +59,7 @@ instance OptionalFieldOf TCPSegment TCPOption where
     insertField tcp opt = over tOpts (<> opt) tcp
     deleteFieldIf f tcp = over tOpts (filter $ \x -> not . f $ x) tcp
     modifyFieldIf tcp f g = over tOpts (concatMap $ \x -> if f x then g x else [x]) tcp
-
+--}
 
 deleteO :: forall a b. (OptionalFieldOf a b, Possibly a ProtocolMessage) => Proxy a -> (b -> Bool) -> ProtocolMessage -> ProtocolMessage
 deleteO _ f pmsg = case as @a pmsg of

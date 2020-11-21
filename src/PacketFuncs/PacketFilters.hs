@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeFamilies           #-}
 
 module PacketFilters where
-import           LibTypes    (ProtocolMessage)
+import           Staging
 import           PrimTypes   ()
 import           Wrappers    ()
 

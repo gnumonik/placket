@@ -15,7 +15,7 @@ import           Data.Serialize
 import qualified Data.Text as T
 import System.IO
 import Serializer
-import LibTypes (ProtocolMessage)
+import Staging
 import qualified Data.Vector as V
 
 
@@ -66,6 +66,17 @@ initDumpFile fPath = do
     return hdl 
 
 type SizeError = T.Text 
+
+prettyStats :: PcapHandle -> IO T.Text
+prettyStats hdl = do
+    (Statistics rcvd dropd ifdropd) <- statistics hdl
+    let myStats = "Pcap Statistics:\n Received: " 
+                 <> (T.pack . show $  rcvd) 
+                 <> "\nDropped: " 
+                 <> (T.pack . show $ dropd)
+                 <> "\nDropped by interface: " 
+                 <> (T.pack . show $ ifdropd)
+    return myStats 
 
 dumpPacket :: Handle -> (PktHdr, V.Vector ProtocolMessage) -> IO (Maybe SizeError)
 dumpPacket hdl ((PktHdr a b _ _),pkt) = do

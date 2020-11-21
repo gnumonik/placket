@@ -31,20 +31,15 @@ module THWrappers where
 
 import           Classes
 import           Control.Monad.Extra (zipWithM)
-import           Data.Serialize
 import           Generics.SOP
 import           Language.Haskell.TH
-import           LibTypes
-import           PrimTypes
+import           FieldClasses
 import           TH                  (instancesToTypes)
 import           THUtils
 import Data.Default 
 import Control.Lens hiding (transform)
 
 
-class ( Generic a, HasDatatypeInfo a,  All2 Eq (Code a), All2 Show (Code a))
-    => WrapProtocol a where
-        wrapP   :: a -> ProtocolMessage
 
 class Default t => Possibly t a where
 
@@ -60,8 +55,9 @@ class Default t => Possibly t a where
 trans :: Possibly t b => Setter' s b -> Proxy t -> s -> s
 trans l prox s = over l (transform prox) s
 
-mkProtocolWrappers :: DecsQ
-mkProtocolWrappers = do
+mkPossiblyInstances:: DecsQ
+mkPossiblyInstances = do
+    reportWarning "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
     myTypes <- instancesToTypes ''IsNetworkProtocol
     let dataConNames = map (\(ConT x) -> x) myTypes
     aliases <- mapM getAlias dataConNames
@@ -69,35 +65,25 @@ mkProtocolWrappers = do
     case aliases' of
         Just someAliases -> do
             let wrapperNames = map ( mkName . (++"m") . nameBase) someAliases
-            wrapIs     <- concat <$> zipWithM mkWrapInstances myTypes wrapperNames
-            possiblyIs <- concat <$> zipWithM mkPossiblyInstances myTypes wrapperNames
-            return $ wrapIs ++ possiblyIs
+            concat <$> zipWithM mkPossiblyInstance myTypes wrapperNames
+
         Nothing -> fail $ "Alias missing for one of the IsNetworkProtocol instances!"
   where
-      mkWrapInstances :: Type -> Name ->  Q [Dec]
-      mkWrapInstances aType aWrapper  = [d|
-                    instance WrapProtocol $t where
-                        wrapP a = (  $(return $ ConE aWrapper) a  )
-                        |]
-                where
-                    t        = return aType
-
-      mkPossiblyInstances :: Type -> Name -> Q [Dec]
-      mkPossiblyInstances aType aWrapper = do
+      mkPossiblyInstance :: Type -> Name -> Q [Dec]
+      mkPossiblyInstance aType aWrapper = do
         [d|
-            instance Possibly $(return aType) ProtocolMessage where
+            instance Possibly $(return aType) $(conT . mkName $ "ProtocolMessage") where
                 isA _  $(return $ (ConP aWrapper) [VarP . mkName $ "y"] ) = Just $ $(varE $ mkName "y")
                 isA _  _ = Nothing
-                fromA = wrapP
+                fromA = $(conE aWrapper)
          |]
 
 
 
 mkProtocolStrings :: Q Exp
 mkProtocolStrings = do
-    myTypes <- instancesToTypes ''IsNetworkProtocol
-    let dataConNames = map (\(ConT x) -> x) myTypes
-    aliases <- mapM getAlias dataConNames
+    tyConNames <- getAllProtocols
+    aliases <- mapM getAlias tyConNames
     let aliases' = sequence aliases
     case aliases' of
         Just someAliases -> 

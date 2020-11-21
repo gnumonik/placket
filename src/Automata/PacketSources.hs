@@ -1,10 +1,11 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE RankNTypes #-}
 module PacketSources where
 
 import qualified Data.Vector as V
-import LibTypes (ProtocolMessage)
+import Staging
 import FactoryTypes
 import Data.Machine
 import Control.Monad.Trans.State.Strict
@@ -22,6 +23,7 @@ import THWrappers
 import NextProtocol
 import Data.Serialize (Serialize)
 import Network.Pcap
+import Control.Concurrent (threadDelay)
 
 
 
@@ -68,7 +70,7 @@ generator myMsgs myRepeats myDelay
                             Nothing -> stop
             Nothing -> return ()
 
-readPcap :: (Possibly a ProtocolMessage, WrapProtocol a, NextProtocol a, Serialize a)  
+readPcap :: (Possibly a ProtocolMessage, NextProtocol a, Serialize a)  
          => PcapHandle 
          -> TMVar () 
          -> Proxy a 
@@ -79,8 +81,10 @@ readPcap hdl lock prox = pump ~> go
         _     <- await
         (h,b) <- liftIO $ atomicNextBS' hdl lock
         case incrementalDeserialize prox b V.empty of
-            Left err -> return () 
-            Right m  -> yield (h,m)
+            Left err -> do
+                liftIO $ threadDelay 10000
+            Right !m  -> do
+                yield (h,V.force m)
 
 
 

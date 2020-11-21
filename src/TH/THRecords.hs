@@ -10,45 +10,139 @@ module THRecords where
 
 
 
-import           Classes
-import           Control.Lens               hiding (children)
-import           Control.Monad
-import Data.Proxy 
-import           Control.Monad.Extra
+import Control.Lens
+    ( Prism', preview, view, over, set, Lens', Setter' )         
+import Data.Proxy ( Proxy(..) ) 
+import Control.Monad.Extra ( concatMapM )
 import qualified Data.Text as T
-import           Data.Char
-import           Language.Haskell.TH
-import           Language.Haskell.TH.Lens   hiding (children, name)
-import           Language.Haskell.TH.Syntax
-import LibTypes
-    ( applyToPrimNonBottom,
-      applyToPrimNormalRec,
-      nonBottomRecUpdate,
-      normalRecUpdate,
-      sumNonBottomApplyTo,
-      sumNonBottomUpdate,
-      sumNormalApplyTo,
-      sumNormalUpdate,
-      Primitive,
-      StringyLens(..) )
-import           PrimTypes
-import           THDeriverUtils
-import           THUtils
-import           Data.Either 
-import           THWrappers 
+import Data.Char ( isDigit, isLower, toLower )
+import Language.Haskell.TH
+    ( mkName,
+      stringL,
+      varP,
+      varE,
+      conT,
+      Exp(LitE, ConE, CaseE, VarE),
+      Match(..),
+      Clause(Clause),
+      Q,
+      Pat(ListP, VarP, WildP, LitP),
+      Type(ListT, ConT, AppT),
+      Dec(NewtypeD, DataD, InstanceD),
+      Name,
+      DecsQ,
+      Con(RecC, NormalC),
+      Info(TyConI),
+      Body(NormalB),
+      nameBase,
+      reify )
+import Language.Haskell.TH.Syntax ( VarBangType )
+import FieldClasses ( StringyLens(..), Primitive )
+import THUtils ( (-@>), (@=), isInstanceOf, isSumType )
+import Data.Either ( lefts ) 
+import THWrappers ( trans, Possibly ) 
+import Text.Read (readMaybe)
+
+
+
+-----
+-- Functions to use in the body of the StringyLens instance declarations. Mainly exist to save me the hassle of doing this all in a TH splice.
+------
+readInt :: T.Text -> Maybe Int
+readInt n = readMaybe (T.unpack n)
+
+proxyOf :: Setter' _a b -> Proxy b
+proxyOf _ = Proxy
+
+proxyOfLens :: Lens' a b -> Proxy b
+proxyOfLens _ = Proxy
+
+proxyOfPrism :: Prism' a b -> Proxy b
+proxyOfPrism _ = Proxy 
+
+proxyOfPrismL :: Prism' a [b] -> Proxy b
+proxyOfPrismL _ = Proxy
+
+normalRecUpdate ::  Primitive c 
+                => Lens' s c 
+                -> (forall b. Primitive b => Proxy b -> Either T.Text [(b -> b)]) 
+                -> Either T.Text (s -> [s])
+normalRecUpdate optic f = case f (proxyOfLens $ optic ) of
+    Right fs -> Right $ \z -> map (\f' -> over optic f' z) fs
+    Left str -> Left str
+
+nonBottomRecUpdate :: (StringyLens s, StringyLens c) => [T.Text] -> (forall b. Primitive b => Proxy b -> Either T.Text [(b -> b)] ) -> Lens' s c -> Either T.Text (s -> [s])
+nonBottomRecUpdate ys f  optic = case  update (proxyOfLens optic) ys f of
+                            Right f' -> Right $ \s -> case view optic s of
+                                c -> let cs = f' c
+                                     in map (\c' -> set optic c' s) cs
+                            Left str -> Left str
 
 
 
 
--- Stuff for deriving the "OptionalFieldOf" class. Not super important, can do later.
-insertF typ opt myLens = over myLens (<> opt) typ 
 
-deleteIF typ f myLens = over myLens (filter $ \x -> not . f $ x) typ
-
-modifyIF typ f g myLens = over myLens (concatMap $ \x -> if f x then g x else [x]) typ
-
+applyToPrimNormalRec :: Primitive d => (forall b. Primitive b => Proxy b -> Either T.Text (b ->  c)) -> Lens' a d -> Either T.Text (a -> Maybe c)
+applyToPrimNormalRec f optic = case f (proxyOfLens optic) of
+    Right f' ->  Right $  \x -> pure f' <*> (preview optic x)
+    Left str -> Left str
 
 
+applyToPrimNonBottom :: (StringyLens d, Monoid c) => [T.Text] -> (forall b. Primitive b => Proxy b -> Either T.Text (b -> c)) -> Lens' t d -> Either T.Text (t -> Maybe c)
+applyToPrimNonBottom ys f optic = case applyTo (proxyOfLens optic) ys f of
+            Right f' ->  Right $ \y ->  f' (view optic y)
+            Left str ->  Left str
+ 
+
+
+sumNormalUpdate :: Primitive c =>  (forall b. Primitive b => Proxy b ->  Either T.Text [(b -> b)] ) -> Prism' a c -> Either T.Text (a -> [a])
+sumNormalUpdate f myPrism = case (f $ proxyOf myPrism) of
+    Right fs  -> Right $ \z -> map (\f' -> over myPrism f' z) fs
+    Left  str -> Left str
+
+sumNonBottomUpdate :: (StringyLens a, StringyLens c) =>  [T.Text] -> (forall b. Primitive b => Proxy b ->  Either T.Text [(b ->  b)] ) -> Prism' a c -> Either T.Text (a -> [a])
+sumNonBottomUpdate ys f myPrism =  case update (proxyOfPrism myPrism) ys f of
+    Right f' -> Right $ \a -> case preview myPrism a of
+        Just c -> map (\c' -> set myPrism c' a) (f' c)
+        Nothing     -> []
+    Left str -> Left str
+
+
+
+
+sumNormalApplyTo :: Primitive c => Prism' a c ->  (forall b. Primitive b => Proxy b -> Either T.Text (b -> d)) -> Either T.Text (a -> Maybe d)
+sumNormalApplyTo myPrism f =  (f $ proxyOfPrism myPrism)  >>= \f' -> (Right $ \x -> f' <$>  preview myPrism x)
+
+
+sumNonBottomApplyTo :: (StringyLens c, Monoid d) => [T.Text] -> Prism' a c ->  (forall b. Primitive b => Proxy b -> Either T.Text (b -> d)) -> Either T.Text (a -> Maybe d)
+sumNonBottomApplyTo ys myPrism f = case applyTo (proxyOfPrism myPrism) ys f of
+            Right f' ->  Right $ \y -> case preview myPrism y of
+                Just t  -> f' t
+                Nothing -> Nothing
+            Left str    ->  Left str
+
+
+listUpdate :: forall c d s. (StringyLens s, StringyLens d, c ~ [d]) 
+           => Proxy s 
+           -> [T.Text] 
+           -> (forall b. Primitive b => Proxy b -> Either T.Text [(b -> b)]) 
+           -> Lens' s c 
+           -> Either T.Text (s -> [s])
+listUpdate _ (ys) f optic 
+    = let g = update (Proxy @d) ys f
+      in case g of
+        Left e -> Left e
+        Right g' -> Right $ \p ->  
+                let dss  = map g' $ view optic p
+                in map (\x -> set optic x p) dss
+
+listApplyTo ::  forall a d c e . (StringyLens a, StringyLens d, e ~ [d], Monoid c) => [T.Text] -> (forall b. Primitive b => Proxy b -> Either T.Text (b -> c)) -> Lens' a e -> Either T.Text (a -> Maybe c)
+listApplyTo ys f optic
+    = case applyTo (Proxy @d) ys f of
+        Left e -> Left e
+        Right r -> Right $ \p -> case preview optic p of
+            Just q -> mapM (r) q >>= \x -> pure $ mconcat x  
+            Nothing -> Nothing 
 
 
 
@@ -75,33 +169,9 @@ mkTransformerMatch sumConNm lensNm typ f = do
     return $ Match myPat (NormalB myBody) []
 
 
-
-
-
 proxyA :: forall a b. Lens' a b -> Proxy a
 proxyA _ = Proxy 
 
-listUpdate :: forall c d s. (StringyLens s, StringyLens d, c ~ [d]) 
-           => Proxy s 
-           -> [T.Text] 
-           -> (forall b. Primitive b => Proxy b -> Either T.Text [(b -> b)]) 
-           -> Lens' s c 
-           -> Either T.Text (s -> [s])
-listUpdate _ (ys) f optic 
-    = let g = update (Proxy @d) ys f
-      in case g of
-        Left e -> Left e
-        Right g' -> Right $ \p ->  
-                let dss  = map g' $ view optic p
-                in map (\x -> set optic x p) dss
-
-listApplyTo ::  forall a d c e . (StringyLens a, StringyLens d, e ~ [d], Monoid c) => [T.Text] -> (forall b. Primitive b => Proxy b -> Either T.Text (b -> c)) -> Lens' a e -> Either T.Text (a -> Maybe c)
-listApplyTo ys f optic
-    = case applyTo (Proxy @d) ys f of
-        Left e -> Left e
-        Right r -> Right $ \p -> case preview optic p of
-            Just q -> mapM (r) q >>= \x -> pure $ mconcat x  
-            Nothing -> Nothing 
 
 deduplicate :: (Foldable t, Eq a) => t a -> [a]
 deduplicate xs = foldr (\x y -> x : filter (/= x) y) [] xs

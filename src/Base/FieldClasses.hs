@@ -1,73 +1,49 @@
-{-# LANGUAGE UndecidableSuperClasses #-}
-{-# LANGUAGE AllowAmbiguousTypes        #-}
-{-# LANGUAGE DataKinds                  #-}
-{-# LANGUAGE DeriveFunctor              #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GADTs                      #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE PolyKinds                  #-}
-{-# LANGUAGE PostfixOperators           #-}
-{-# LANGUAGE RankNTypes                 #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TemplateHaskell            #-}
-{-# LANGUAGE TypeApplications           #-}
-{-# LANGUAGE TypeFamilies               #-}
-{-# LANGUAGE TypeOperators              #-}
-{-# LANGUAGE UndecidableInstances, OverloadedStrings       #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 
-module LibTypes where
+module FieldClasses where
 
-import           Aliases
-import           Classes
-import           Control.Lens         hiding (Contains, (:>))
-import           Control.Monad
-import qualified Data.ByteString      as BS
-import           Data.Default
-import qualified Data.Text as T 
-import           Data.Functor.Compose 
-import qualified Data.Serialize as S
-import           Data.Kind
-import           Data.Maybe
-import Randomizer
-import           Data.Typeable
-import           Data.Word
-import           DNS                  ()
-import           Ethernet             ()
-import           Generics.SOP.TH
-import           ICMP4                
-import           IP4                  
-import           PrimParsers
-import           PrimTypes
-import           TCP                  ()
-import           Text.Read
-import           TH
+
+import Data.Word (Word32, Word16, Word8)
+import Classes 
+import PrimTypes 
+import Randomizer ()
+import qualified Data.ByteString as BS
+import qualified Data.Text as T
 import qualified Data.Vector as V
-import           TH2
-import           UDP                  ()
-import           Numeric 
-import           PrimFuncs 
-import           Data.Char (intToDigit)
-import           Text.Hex  
+import qualified Data.Serialize as S
+import Data.Proxy
+import Data.Default
+import Data.Typeable
+import TH
+import PrimParsers
+import Numeric
+import Data.Char
+import PrimFuncs (makeWord24)
 
-import           PrettyPrint 
-import Control.Monad.State.Lazy
-import System.Random.Mersenne.Pure64 (PureMT)
-
-
+import Ethernet ()
+import IP4 (prettifyIP)
+import ICMP4 ()
+import TCP () 
+import UDP () 
+import DNS ()
+import Text.Hex (encodeHex)
 
 type Builder a = V.Vector a 
 
 
+------
+--- Class MaybeEnum. This is ugly, and I'm pretty sure it's an antipattern, but it is far simpler than the other ways I could think of to do this :-( 
+------
 
-
-
-
--- An ugly, stupid typeclass that violates all principles of good design.
--- Unfortunately, serves a needed purpose. 
 
 class MaybeEnum a where
     maybeFromTo :: Maybe (a -> a -> [a])
@@ -107,11 +83,12 @@ instance MaybeEnum MessageContent where
     maybeFromTo = Nothing
 
 
+------
+-- Class CanParse. Only meant for message primitives. Better than using "read". 
+------ 
 
+data ValRangeSet a = Val a | Range a a | Set [a] deriving (Show, Eq)
 
--- For safe reading of input from the user.
--- Needs to be a typeclass for dictionary passing requirements on how
--- the records system works. 
 class (Eq a) => CanParse a where
   parseIt :: T.Text -> Maybe a
 
@@ -177,11 +154,103 @@ instance (MaybeEnum a, Ord a, CanParse a) => CanParse (ValRangeSet a) where
                     Right aList -> Set <$> mapM parseIt aList
 
 
+------
+-- Class PrettyPrint. For pretty printing. Uses the functions in the prettyprint module. Instances for non-primitive types are defined in the GPrettyPrint module.
+------
 
 
--- The Value type & associated classes. Needed for some yet-to-be-implemented
--- packet machines. Main purpose is to allow conversion between the primitive data
--- types. 
+
+data PrintMode = Hex | Bin | Dflt deriving (Show, Eq)
+
+
+boolToInt :: Bool -> Int
+boolToInt b = case b of
+    True -> 1
+    False -> 0
+
+class PrettyPrint a where
+    pprint :: PrintMode -> a -> T.Text 
+
+instance PrettyPrint Word8 where
+    pprint m w = case m of
+        Hex  -> T.pack $ showHex w ""
+        Bin  -> T.pack $ showIntAtBase 2 intToDigit w ""
+        Dflt -> T.pack . show $ w 
+
+instance PrettyPrint Word16 where
+    pprint m w = case m of
+        Hex  -> T.pack $ showHex w ""
+        Bin  -> T.pack $ showIntAtBase 2 intToDigit w ""
+        Dflt -> T.pack . show $ w 
+
+instance PrettyPrint Word24 where
+    pprint m w@(Word24 a b c) = case m of
+        Hex  -> pprint Hex a <> pprint Hex b <> pprint Hex c  
+        Bin  -> pprint Bin a <> pprint Bin b <> pprint Bin c  
+        Dflt -> T.pack . show $ makeWord24 a b c
+
+instance PrettyPrint Word32 where
+    pprint m w = case m of
+        Hex  -> T.pack $ showHex w ""
+        Bin  -> T.pack $ showIntAtBase 2 intToDigit w ""
+        Dflt -> T.pack . show $ w 
+
+instance PrettyPrint IP4Address where
+    pprint m w = case m of
+        Hex  -> T.pack $ showHex (unIP4 w) ""
+        Bin  -> T.pack $ showIntAtBase 2 intToDigit (unIP4 w) ""
+        Dflt -> prettifyIP . unIP4 $  w
+
+instance PrettyPrint Flag where
+    pprint m w = case m of
+        Hex  -> T.pack $ showHex (boolToInt . unFlag $ w) ""
+        Bin  -> T.pack $ showIntAtBase 2 intToDigit (boolToInt . unFlag $ w) ""
+        Dflt -> T.pack . show . boolToInt . unFlag $ w
+
+instance PrettyPrint MacAddr where
+    pprint m mac@(MacAddr a b c d e f) = case m of
+        Hex  -> prettyMac mac
+        Bin  -> T.concat  $ map (pprint Bin) [a,b,c,d,e,f]
+        Dflt -> prettyMac mac
+
+instance PrettyPrint BS.ByteString where
+    pprint m w = case m of
+        Hex  -> encodeHex w 
+        Bin  -> T.concat $ map (pprint Bin) $ BS.unpack w 
+        Dflt -> T.pack . show $ w 
+
+instance PrettyPrint DNSName where
+    pprint m w = case m of
+        Hex -> 
+            T.concat 
+          . V.toList 
+          . V.map (\(n,DNSLabel l) -> case n of 
+                DNSNameLen w8 -> "(" <> pprint Hex w8 <> "," <> pprint Hex l <> ")" ) 
+          $ dnsName' w
+
+        Bin -> 
+            T.concat 
+          . V.toList 
+          . V.map (\(n,DNSLabel l) -> case n of 
+                DNSNameLen w8 -> "(" <> pprint Bin w8 <> "," <> pprint Bin l <> ")" ) 
+          $ dnsName' w
+
+        Dflt -> 
+            T.concat 
+          . V.toList 
+          . V.map (\(n,DNSLabel l) -> case n of 
+                DNSNameLen w8 -> "(" <> pprint Dflt w8 <> "," <> pprint Dflt l <> ")" ) 
+          $ dnsName' w
+
+instance PrettyPrint MessageContent where
+    pprint m w = pprint m (getMessage w)
+
+
+-----
+-- PackVal, ExtractVal, and Value. Most of what these classes and data types are used for isn't yet implemented, but in the future 
+-- it will be used to implement operations on fields. Associated functions here are prototypes and need tested. 
+-----
+
 
 data Value = W8 Word8
                | W16 Word16
@@ -196,7 +265,11 @@ data Value = W8 Word8
                | INT  Int
                | DNAME DNSName
                | LIST [Value] deriving (Show, Eq, Ord) 
-               
+
+data TypedVal = TypedVal Value PrimToken
+
+data AnnotatedValue = AnnotatedValue TypedVal T.Text   
+
 class PackVal a where
     packVal :: a -> Value
 
@@ -299,9 +372,8 @@ instance ExtractVal [Value] where
     extractVal (LIST i)    = Right i
     extractVal _           = Left $ "Type error: Expected a list of values."
 
+
 type DSLFunc  = Value -> Value -> Either TypeError Value
-
-
 
 liftDSL :: (ExtractVal a, ExtractVal b, PackVal c) => (a -> b -> c) -> DSLFunc
 liftDSL f a b = packVal <$> (pure f <*> (extractVal a) <*> (extractVal b))
@@ -369,97 +441,25 @@ add v1 i _ = liftNumericFunc (+) v1 (packVal (fromIntegral i :: Word32))
 subtract :: (Primitive d, PackVal d, Integral d, Integral a) => Proxy d -> a -> p -> Value -> Either TypeError Value
 subtract v1 i _ = liftNumericFunc (-) v1 (packVal (fromIntegral i :: Word32))
 
-data PrintMode = Hex | Bin | Dflt deriving (Show, Eq)
 
-boolToInt :: Bool -> Int
-boolToInt b = case b of
-    True -> 1
-    False -> 0
+------
+-- Class Primitive. Every value in every field of every protocol type must be constructed from these types, and these types alone. 
+------
 
-class PrettyPrint a where
-    pprint :: PrintMode -> a -> T.Text 
 
-instance PrettyPrint Word8 where
-    pprint m w = case m of
-        Hex  -> T.pack $ showHex w ""
-        Bin  -> T.pack $ showIntAtBase 2 intToDigit w ""
-        Dflt -> T.pack . show $ w 
-
-instance PrettyPrint Word16 where
-    pprint m w = case m of
-        Hex  -> T.pack $ showHex w ""
-        Bin  -> T.pack $ showIntAtBase 2 intToDigit w ""
-        Dflt -> T.pack . show $ w 
-
-instance PrettyPrint Word24 where
-    pprint m w@(Word24 a b c) = case m of
-        Hex  -> pprint Hex a <> pprint Hex b <> pprint Hex c  
-        Bin  -> pprint Bin a <> pprint Bin b <> pprint Bin c  
-        Dflt -> T.pack . show $ makeWord24 a b c
-
-instance PrettyPrint Word32 where
-    pprint m w = case m of
-        Hex  -> T.pack $ showHex w ""
-        Bin  -> T.pack $ showIntAtBase 2 intToDigit w ""
-        Dflt -> T.pack . show $ w 
-
-instance PrettyPrint IP4Address where
-    pprint m w = case m of
-        Hex  -> T.pack $ showHex (unIP4 w) ""
-        Bin  -> T.pack $ showIntAtBase 2 intToDigit (unIP4 w) ""
-        Dflt -> prettifyIP . unIP4 $  w
-
-instance PrettyPrint Flag where
-    pprint m w = case m of
-        Hex  -> T.pack $ showHex (boolToInt . unFlag $ w) ""
-        Bin  -> T.pack $ showIntAtBase 2 intToDigit (boolToInt . unFlag $ w) ""
-        Dflt -> T.pack . show . boolToInt . unFlag $ w
-
-instance PrettyPrint MacAddr where
-    pprint m mac@(MacAddr a b c d e f) = case m of
-        Hex  -> prettyMac mac
-        Bin  -> T.concat  $ map (pprint Bin) [a,b,c,d,e,f]
-        Dflt -> prettyMac mac
-
-instance PrettyPrint BS.ByteString where
-    pprint m w = case m of
-        Hex  -> encodeHex w 
-        Bin  -> T.concat $ map (pprint Bin) $ BS.unpack w 
-        Dflt -> T.pack . show $ w 
-
-instance PrettyPrint DNSName where
-    pprint m w = case m of
-        Hex -> 
-            T.concat 
-          . V.toList 
-          . V.map (\(n,DNSLabel l) -> case n of 
-                DNSNameLen w8 -> "(" <> pprint Hex w8 <> "," <> pprint Hex l <> ")" ) 
-          $ dnsName' w
-
-        Bin -> 
-            T.concat 
-          . V.toList 
-          . V.map (\(n,DNSLabel l) -> case n of 
-                DNSNameLen w8 -> "(" <> pprint Bin w8 <> "," <> pprint Bin l <> ")" ) 
-          $ dnsName' w
-
-        Dflt -> 
-            T.concat 
-          . V.toList 
-          . V.map (\(n,DNSLabel l) -> case n of 
-                DNSNameLen w8 -> "(" <> pprint Dflt w8 <> "," <> pprint Dflt l <> ")" ) 
-          $ dnsName' w
-
-instance PrettyPrint MessageContent where
-    pprint m w = pprint m (getMessage w)
-
-    
--- The Primitive type class. Every field of every record of every type of every protocol
--- must be an instance of this class. The token function should allow (with 
--- a bit of unsafecoercing) casting one value to type another. The functionality that
--- requires this is not yet implemented. 
-
-class (Show a, Default a, Typeable a,  MaybeEnum a, Ord a, CanParse a, Default a, PackVal a, ExtractVal a, Eq a, Randomize a) => Primitive a where
+class (Show a
+      , Default a
+      , Typeable a
+      , MaybeEnum a
+      , Ord a
+      , CanParse a
+      , Default a
+      , PackVal a
+      , ExtractVal a
+      , Eq a
+      , Randomize a
+      , PrettyPrint a) 
+      => Primitive a where
     toValRange       :: T.Text -> Maybe (ValRangeSet a)
     token            :: PrimToken
 
@@ -517,15 +517,52 @@ data PrimToken
     | MSGC' 
     deriving (Eq, Show)
 
-data TypedVal = TypedVal Value PrimToken
+------
+-- Class StringyLens. This, class, when combined with a mountain of inscrutable TH magic in the THRecords module,
+-- allows for pseudo-compositional text-based record selectors. 
+--
+-- The 'Proxy a' argument in update & applyTo is usually a proxy of a network protocol type, but in the OptionalFields
+-- module, this class is used to perform operations on sub-protocols to allow operations on optional fields.
+--
+-- The [T.Text] argument is a list of record selector names, and operates as a kind of dictionary that is passed
+-- to more deeply nested components of the type. 
+--
+-- The third argument in update is a function from a Proxy of an instance of the primitive class to
+-- a list of functions from that instance to itself. It is necessary that it be a list in order to facilitate the
+-- generation of packets - one way to generate packets is to enumerate a range or noncontiguous set of values. 
+--
+-- The third argument in apply to is a function from an instance of the primitive class to Maybe <Some monoid>. 
+-- The maybe constraint is necessary to facilitate working with prisms (and also makes writing ProtocolMessage -> Bool
+-- functions a bit easier since we can use 'Nothing' to convey the absence of packet of the correct type), and the monoid
+-- constraint... is annoying, but (as far as I can tell) necessary for working with optional fields. Also, since IO ()
+-- is a monoid, it gives us an easy way to extract values and do some IO with them. 
 
-data AnnotatedValue = AnnotatedValue TypedVal T.Text  
+class Default a => StringyLens a where
+    update  ::  Proxy a 
+            -> [T.Text] 
+            -> (forall b. Primitive b => Proxy b -> Either T.Text [(b -> b)] ) 
+            -> Either T.Text (a -> [a])
+    applyTo :: Monoid c 
+            => Proxy a 
+            -> [T.Text] 
+            -> (forall b. Primitive b => Proxy b -> Either T.Text (b ->  c) ) 
+            -> Either T.Text (a ->  Maybe c)
 
---Finalized comparison and setter stuff:
+------
+-- Class OptionalFieldOf. A is the parent type, b is the child type. Allows for operations on fields that can be singly present, 
+-- mutiply present, or absent, in a protocol message.
+------
+class (Default b, StringyLens a, StringyLens b) 
+    => OptionalFieldOf a b where
+        insertField   :: a -> [b] -> a
+        deleteFieldIf :: (b -> Bool) -> a -> a
+        modifyFieldIf :: a -> (b -> Bool) -> (b -> [b]) -> a 
 
 
-data ValRangeSet a = Val a | Range a a | Set [a] deriving (Show, Eq)
 
+
+
+{--
 
 toSET :: forall b. Primitive b => T.Text -> Proxy b ->  (b -> b)
 toSET str _ = case parseIt str :: Maybe (ValRangeSet b) of
@@ -545,107 +582,39 @@ toCOMP str _ = case parseIt str :: Maybe (ValRangeSet b) of
             Nothing -> const False
     Just (Set xs) -> \x -> foldr (\a b -> x == a || b) False xs
     _ -> const False
+--}
 
 
 
--- Stuff for parsing record selectors to lens expressions. Here for TH staging reasons. 
-class Default a => StringyLens a where
-    update  ::  Proxy a 
-            -> [T.Text] 
-            -> (forall b. Primitive b => Proxy b -> Either T.Text [(b -> b)] ) 
-            -> Either T.Text (a -> [a])
-    applyTo :: Monoid c 
-            => Proxy a 
-            -> [T.Text] 
-            -> (forall b. Primitive b => Proxy b -> Either T.Text (b ->  c) ) 
-            -> Either T.Text (a ->  Maybe c)
+
             
 
 
 
-normalRecUpdate ::  Primitive c 
-                => Lens' s c 
-                -> (forall b. Primitive b => Proxy b -> Either T.Text [(b -> b)]) 
-                -> Either T.Text (s -> [s])
-normalRecUpdate optic f = case f (proxyOfLens $ optic ) of
-    Right fs -> Right $ \z -> map (\f' -> over optic f' z) fs
-    Left str -> Left str
 
-nonBottomRecUpdate :: (StringyLens s, StringyLens c) => [T.Text] -> (forall b. Primitive b => Proxy b -> Either T.Text [(b -> b)] ) -> Lens' s c -> Either T.Text (s -> [s])
-nonBottomRecUpdate ys f  optic = case  update (proxyOfLens optic) ys f of
-                            Right f' -> Right $ \s -> case view optic s of
-                                c -> let cs = f' c
-                                     in map (\c' -> set optic c' s) cs
-                            Left str -> Left str
+data ETH = ETH deriving (Show, Eq, Typeable)
+instance Alias EthernetFrame ETH
 
+data ARP = ARP deriving (Show, Eq, Typeable) 
+instance Alias ARPMessage ARP
 
+data IP4 = IP4 deriving (Show, Eq, Typeable)
+instance Alias IP4Packet IP4
 
+data ICMP = ICMP deriving (Show, Eq, Typeable)
+instance Alias ICMPMessage ICMP
 
+data UDP = UDP deriving (Show, Eq, Typeable)
+instance Alias UDPMessage UDP
 
-applyToPrimNormalRec :: Primitive d => (forall b. Primitive b => Proxy b -> Either T.Text (b ->  c)) -> Lens' a d -> Either T.Text (a -> Maybe c)
-applyToPrimNormalRec f optic = case f (proxyOfLens optic) of
-    Right f' ->  Right $  \x -> pure f' <*> (preview optic x)
-    Left str -> Left str
+data TCP = TCP deriving (Show, Eq, Typeable)
+instance Alias TCPSegment TCP
 
+data DNS = DNS deriving (Show, Eq, Typeable)
+instance Alias DNSMessage DNS
 
-applyToPrimNonBottom :: (StringyLens d, Monoid c) => [T.Text] -> (forall b. Primitive b => Proxy b -> Either T.Text (b -> c)) -> Lens' t d -> Either T.Text (t -> Maybe c)
-applyToPrimNonBottom ys f optic = case applyTo (proxyOfLens optic) ys f of
-            Right f' ->  Right $ \y ->  f' (view optic y)
-            Left str ->  Left str
- 
+data CONTENT = CONTENT deriving (Show, Eq, Typeable)
+instance Alias MessageContent CONTENT 
 
-
-sumNormalUpdate :: Primitive c =>  (forall b. Primitive b => Proxy b ->  Either T.Text [(b -> b)] ) -> Prism' a c -> Either T.Text (a -> [a])
-sumNormalUpdate f myPrism = case (f $ proxyOf myPrism) of
-    Right fs  -> Right $ \z -> map (\f' -> over myPrism f' z) fs
-    Left  str -> Left str
-
-sumNonBottomUpdate :: (StringyLens a, StringyLens c) =>  [T.Text] -> (forall b. Primitive b => Proxy b ->  Either T.Text [(b ->  b)] ) -> Prism' a c -> Either T.Text (a -> [a])
-sumNonBottomUpdate ys f myPrism =  case update (proxyOfPrism myPrism) ys f of
-    Right f' -> Right $ \a -> case preview myPrism a of
-        Just c -> map (\c' -> set myPrism c' a) (f' c)
-        Nothing     -> []
-    Left str -> Left str
-
-
-
-
-sumNormalApplyTo :: Primitive c => Prism' a c ->  (forall b. Primitive b => Proxy b -> Either T.Text (b -> d)) -> Either T.Text (a -> Maybe d)
-sumNormalApplyTo myPrism f =  (f $ proxyOfPrism myPrism)  >>= \f' -> (Right $ \x -> f' <$>  preview myPrism x)
-
-
-sumNonBottomApplyTo :: (StringyLens c, Monoid d) => [T.Text] -> Prism' a c ->  (forall b. Primitive b => Proxy b -> Either T.Text (b -> d)) -> Either T.Text (a -> Maybe d)
-sumNonBottomApplyTo ys myPrism f = case applyTo (proxyOfPrism myPrism) ys f of
-            Right f' ->  Right $ \y -> case preview myPrism y of
-                Just t  -> f' t
-                Nothing -> Nothing
-            Left str    ->  Left str
-
-
-
-readInt :: T.Text -> Maybe Int
-readInt n = readMaybe (T.unpack n)
-
-proxyOf :: Setter' _a b -> Proxy b
-proxyOf _ = Proxy
-
-proxyOfLens :: Lens' a b -> Proxy b
-proxyOfLens _ = Proxy
-
-proxyOfPrism :: Prism' a b -> Proxy b
-proxyOfPrism _ = Proxy 
-
-proxyOfPrismL :: Prism' a [b] -> Proxy b
-proxyOfPrismL _ = Proxy
-
-
-
-
-
-
-
-
---HAS TO COME AFTER THE 'mkProtocol' SPLICES!!!
-mkNetworkProtocols
 
 

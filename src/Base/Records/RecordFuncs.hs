@@ -41,13 +41,12 @@ import Data.List ( foldl' )
 
 import Data.Proxy ( Proxy(..) )
 import Data.Typeable ( typeOf )
-
-import LibTypes
-    (CanParse(parseIt),
+import Staging 
+import FieldClasses
+    (PrettyPrint, CanParse(parseIt),
       MaybeEnum(maybeFromTo),
       PackVal(..),
       Primitive,
-      ProtocolMessage,
       StringyLens(..),
       Value )
 import PrimTypes
@@ -79,9 +78,12 @@ import Wrappers
 import Text.Parsec.Text ()
 import Control.Monad ( (<=<), (>=>) )
 import qualified Data.Vector as V
+import Control.Lens 
 import Data.Either 
 import Classes 
 import Data.Monoid 
+import GPrettyPrint
+import THPrettyPrint 
 
 {--
 deriveStringyLens ''EthernetFrame
@@ -94,8 +96,9 @@ deriveStringyLens ''UDPMessage
 --}
 
 
+
 withProtocol :: ProtocolType
-             -> (forall a. (Possibly a ProtocolMessage, Default a, StringyLens a, Randomize a) 
+             -> (forall a. (Possibly a ProtocolMessage, Default a, StringyLens a, Randomize a, PrettyPrint a) 
                 => Proxy a 
                 -> Either T.Text b)
              -> Either T.Text b
@@ -111,12 +114,12 @@ withProtocol str f = $mkWithProtocolMatches
     --_      -> Left  $ "Error: " <> str <> " is not a valid protocol type."
 
 
-liftSetter :: forall a. (Possibly a ProtocolMessage, WrapProtocol a) => Either T.Text (a -> [a]) -> Either T.Text (ProtocolMessage -> [ProtocolMessage])
+liftSetter :: forall a. (Possibly a ProtocolMessage) => Either T.Text (a -> [a]) -> Either T.Text (ProtocolMessage -> [ProtocolMessage])
 liftSetter f = case f of
 
     Right f' -> Right $ \p ->  case (as @a p) of
 
-        Just t  ->  wrapP <$> f'  t
+        Just t  ->  fromA <$> f'  t
 
         Nothing -> []
 
@@ -189,7 +192,7 @@ setProtocolFields (ProtocolBuilder tStr (FieldBuilderExp myFields)) =
 
 -- stuff to generate protocol filters
 
-liftApplyTo :: forall a c. (Possibly a ProtocolMessage, WrapProtocol a) 
+liftApplyTo :: forall a c. (Possibly a ProtocolMessage) 
             => (a -> Maybe c) -> (ProtocolMessage -> Maybe c)
 liftApplyTo f = \p -> f =<< (as @a p)
 
@@ -269,7 +272,7 @@ evalComp c = case c of
 
 
 formatList :: T.Text -> [T.Text] -> T.Text
-formatList label lst = label <> ": \n" <> foldr (\x y -> x <> "\n" <> y) "" lst  
+formatList label lst = label <> ": \n" <> foldr (\x y -> "\n" <> x <> "\n" <> y) "" lst  
 
 
 evalMsgSelExpPlus :: V.Vector ProtocolMessage 

@@ -8,7 +8,7 @@ import Control.Concurrent.STM
 import Network.Pcap (sendPacketBS, PcapHandle)
 import qualified Data.Vector as V
 import Control.Monad.IO.Class
-import LibTypes (ProtocolMessage)
+import Staging
 import Data.Machine
 import Control.Category (Category)
 import Control.Monad.Trans.State.Strict

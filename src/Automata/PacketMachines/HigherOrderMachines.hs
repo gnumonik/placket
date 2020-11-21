@@ -10,7 +10,7 @@ import FactoryTypes (Predicate, Message, PacketMachine)
 import Data.Machine
 import Control.Monad.Trans.State.Strict
 import qualified Data.Vector as V
-import LibTypes (ProtocolMessage)
+import Staging
 import Control.Concurrent.STM
 import Control.Monad
 import Data.Machine.Lift
