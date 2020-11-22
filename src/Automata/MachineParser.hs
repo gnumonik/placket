@@ -16,6 +16,7 @@
 
 module MachineParser where
 
+
 import           Control.Monad
  
 import           Control.Lens.TH 
@@ -40,8 +41,8 @@ import           PrimParsers
 import           PrimTypes
 import           RecordParsers           
 import           RecordTypes 
-import           Text.Parsec
-import           Text.Parsec.Text
+import           Text.Megaparsec
+import           Text.Megaparsec.Char
 import qualified Data.Vector as V 
 import Control.Concurrent.STM
 import Control.Monad.IO.Class
@@ -130,7 +131,7 @@ makeMachine mStr =
     let m = parseLex machines mStr
     in case m of
         Left err -> do
-            return $ Left . formatError $ err 
+            return $ Left . T.pack . show $ err 
         Right s  -> do
             s' <- s
             case s' of
@@ -172,20 +173,14 @@ getMachineByNameSTATE nm en
 
 
 
--- Formats parsec errors to be slightly less verbose.
-formatError :: ParseError -> T.Text 
-formatError e = T.concat $ map (T.pack . (<> "\n") . unwords) . filter filterLines . map words $ lines (show e)
-    where
-        filterLines [] = False 
-        filterLines (x:_) =  x == "expecting" || x == "unexpected" 
-
 ppMode :: Parser PrintMode
 ppMode = lexeme $ try $ do
-    m <- lexeme $ many1 (satisfy $ \x ->  isLetter x || isDigit x ) 
-    case map toUpper m of
-        "HEX"     -> return Hex
-        "BIN"     -> return Bin
-        "DEFAULT" -> return Dflt
+    m <- lexeme $ string "hex" <|> string "bin" <|> string "default"
+    case  m of
+        "hex"     -> return Hex
+        "bin"     -> return Bin
+        "default" -> return Dflt
+        _         -> fail $ "Expected a printMode value (hex, bin, default)"
 
 prettyPrintR :: Parser (StateT MyParserState IO ParseOutput)
 prettyPrintR = lexeme $ try $ do
@@ -246,7 +241,7 @@ msgPredicate = do
 popR :: Parser (StateT MyParserState IO ParseOutput)
 popR = lexeme $ try $ do
     void $ lexeme $ string "pop"
-    protocolType <- lexeme $ many1 (satisfy (/= ' '))
+    protocolType <- lexeme $ some (satisfy (/= ' '))
     let myPop = pop $ T.pack protocolType
     case myPop of
         Left err -> return . return  $ Left err
@@ -257,7 +252,7 @@ popR = lexeme $ try $ do
 pullR :: Parser (StateT MyParserState IO ParseOutput)
 pullR = lexeme $ try $ do
     void $ lexeme $ string "pull"
-    protocolType <- lexeme $ many1 (satisfy (/= ' '))
+    protocolType <- lexeme $ some (satisfy (/= ' '))
     let myPull =  pull $ T.pack protocolType
     case myPull of
         Left err    -> return . return $ Left err
@@ -268,7 +263,7 @@ pullR = lexeme $ try $ do
 extractR :: Parser (StateT MyParserState IO ParseOutput)
 extractR = lexeme $ try $ do
     void $ lexeme $ string "extract"
-    protocolType <- lexeme $ many1 (satisfy (/= ' '))
+    protocolType <- lexeme $ some (satisfy (/= ' '))
     let myExtract = extract $ T.pack protocolType
     case myExtract of
         Left err   -> return . return $ Left err
@@ -279,7 +274,7 @@ extractR = lexeme $ try $ do
 cutR :: Parser (StateT MyParserState IO ParseOutput)
 cutR = lexeme $ try $ do
     void $ lexeme $ string "cut"
-    protocolType <- lexeme $ many1 (satisfy (/= ' '))
+    protocolType <- lexeme $ some (satisfy (/= ' '))
     let myCut = cut $ T.pack protocolType
     case myCut of
         Left err   -> return . return $ Left err
@@ -331,7 +326,7 @@ modifyOptR :: Parser (StateT MyParserState IO ParseOutput)
 modifyOptR = lexeme $ try $ do
     void $ lexeme $ string "modifyOpt"
     tStr <- protocolType 
-    fStr <- lexeme $ many1 (satisfy (/= ' '))
+    fStr <- lexeme $ some (satisfy (/= ' '))
     void . lexeme $ string "when" 
     fSel <- fieldSelectorExp 
     void . lexeme $ string "changeTo"
@@ -346,8 +341,8 @@ insertOptR :: Parser (StateT MyParserState IO ParseOutput)
 insertOptR = lexeme $ try $ do
     void $ lexeme $ string "insertOpt"
     tStr <- protocolType 
-    fStr <- lexeme $ many1 (satisfy (/= ' ')) 
-    fBld <- many1 fieldBuilder
+    fStr <- lexeme $ some (satisfy (/= ' ')) 
+    fBld <- some fieldBuilder
     let myInsert =  fmap liftMachine . join $ withOptionalField tStr (T.pack fStr) $    
                         insertOMatic fBld
     case myInsert of
@@ -358,7 +353,7 @@ deleteOptR :: Parser (StateT MyParserState IO ParseOutput)
 deleteOptR = lexeme $ try $ do
     void $ lexeme $ string "deleteOpt"
     tStr <- protocolType 
-    fStr <- lexeme $ many1 (satisfy (/= ' ')) 
+    fStr <- lexeme $ some (satisfy (/= ' ')) 
     fSel <- fieldSelectorExp
     let myDelete = fmap liftMachine $ deleteOMaticV2 tStr (T.pack fStr) fSel
     case myDelete of
@@ -369,6 +364,7 @@ deleteOptR = lexeme $ try $ do
 -- The BPF filters provided by libpcap won't work here, since we want to be able to use these operations on packets that have been deserialized or generated in this application.
 ------
 
+-- experimental 
 experimentalSelect :: Parser (StateT MyParserState IO ParseOutput)
 experimentalSelect = lexeme $ try $ do
     void . lexeme $ string "expSelect"
@@ -417,7 +413,7 @@ alertR = lexeme $ try $ do
 stashR :: Parser (StateT MyParserState IO ParseOutput)
 stashR = lexeme $ try $ do
     void $ lexeme $ string "stash"
-    stashName <- many1 (satisfy $ (/= ' '))
+    stashName <- some (satisfy $ (/= ' '))
     return $! do
         s <- get
         let stashMap = s ^. (env . stashes)
@@ -470,9 +466,9 @@ createR :: Parser (StateT MyParserState IO ParseOutput)
 createR = lexeme $ try $ do
     void $ lexeme $ string "create"
     void . lexeme $ string "wait="
-    dly <- lexeme $ many1 (satisfy isDigit)
+    dly <- lexeme $ some (satisfy isDigit)
     void . lexeme $ string "repeat="
-    rpts <-  lexeme $ many1 (satisfy isDigit)
+    rpts <-  lexeme $ some (satisfy isDigit)
     bld <- builder protocolBuilder
     let ps = V.force <$> V.mapM PO.makeProtocolMessageV2 bld
     case ps of
@@ -486,7 +482,7 @@ maybeInt = option Nothing go
     where
         go :: Parser (Maybe Int)
         go = lexeme $ try $ do
-            n <- many1 $ satisfy isDigit
+            n <- some $ satisfy isDigit
             return $! Just (read n :: Int) 
 
 
@@ -496,7 +492,7 @@ maybeInt = option Nothing go
 counterR :: Parser (StateT MyParserState IO ParseOutput)
 counterR = lexeme $ try $ do
     void $ lexeme $ string "count"
-    toCount <- many1 (satisfy isDigit)
+    toCount <- some (satisfy isDigit)
     return $! do
         theTime <- liftIO $ getCurrentTime
         s <- get
@@ -508,7 +504,7 @@ counterR = lexeme $ try $ do
 bufferR :: Parser (StateT MyParserState IO ParseOutput)
 bufferR = lexeme $ try $ do
     void $ lexeme $ string "buffer"
-    n <- many1 $ satisfy isDigit
+    n <- some $ satisfy isDigit
     return . return $! Right (buffer (read n :: Int), Nothing)
 
 dumpPktR :: Parser (StateT MyParserState IO ParseOutput)
@@ -517,7 +513,7 @@ dumpPktR = lexeme $ try $ do
     void . lexeme $ string "filePath="
     fPath <- filePath
     void . lexeme $ string "numPackets="
-    n' <- lexeme $ many1 (satisfy isDigit)
+    n' <- lexeme $ some (satisfy isDigit)
     let n = read n' :: Int 
     return $! do 
         paths <- view (env . openDumpFiles) <$> get
@@ -614,7 +610,7 @@ switchR = lexeme $ try $ do
 countSwitchR :: Parser (StateT MyParserState IO ParseOutput)
 countSwitchR = lexeme $ try $ do
     void $ lexeme $ string "countSwitch"
-    n <- lexeme $ many1 (satisfy isDigit)
+    n <- lexeme $ some (satisfy isDigit)
     mArg1 <- machineArrParens
     mArg2 <- machineArrParens
     let n' = read n :: Int 
@@ -628,7 +624,7 @@ countSwitchR = lexeme $ try $ do
 timeSwitchR :: Parser (StateT MyParserState IO ParseOutput)
 timeSwitchR = lexeme $ try $ do
     void $ lexeme $ string "timeSwitch"
-    n <- lexeme $ many1 (satisfy isDigit)
+    n <- lexeme $ some (satisfy isDigit)
     mArg1 <- machineArrParens
     mArg2 <- machineArrParens
     let n' = read n :: Int 
@@ -672,7 +668,7 @@ caseParser = lexeme $ try $ do
 machByName :: Parser (StateT MyParserState IO ParseOutput)
 machByName = lexeme $ try $ do
     rest  <- lexeme $ 
-        many1 (satisfy $ \x -> isLetter x || isDigit x || x == '_') 
+        some (satisfy $ \x -> isLetter x || isDigit x || x == '_') 
     return $! do
         s  <- get
         let x = getMachineByNameSTATE (MachineName $ T.pack rest) (s ^. env)
@@ -688,7 +684,7 @@ timeOutFunc  maxTOs toMultiplier timeOutCnt timeOut
 
 double :: Parser Double
 double  = read <$> parser  where 
-   parser = (++) <$> (many1 digit) <*> (option "" $ (:) <$> char '.'  <*> (many1 digit) )
+   parser = (++) <$> (some numberChar) <*> (option "" $ (:) <$> char '.'  <*> (some numberChar) )
 
 listenForR :: Parser (StateT MyParserState IO ParseOutput)
 listenForR = lexeme $ try $ do
@@ -697,7 +693,7 @@ listenForR = lexeme $ try $ do
     void $ lexeme $ string "timeout="
     dbl <- lexeme $ double
     void $ lexeme $ string "maxTimeouts="
-    maxTOs' <- lexeme . many1 . satisfy $ isDigit
+    maxTOs' <- lexeme . some . satisfy $ isDigit
     void . lexeme $ string "multiplier="
     mult <- lexeme $ double 
     void . lexeme $ string "onResponse="
@@ -723,7 +719,7 @@ listenForR = lexeme $ try $ do
 limitR :: Parser (StateT MyParserState IO ParseOutput)
 limitR = lexeme $ try $ do
     void $ lexeme $ string "limit"
-    n <- lexeme $ many1 $ satisfy isDigit
+    n <- lexeme $ some $ satisfy isDigit
     m' <- machineArrParens 
     let n' = read n :: Int 
     return $! do
@@ -765,8 +761,8 @@ sendIt = lexeme $ try $ do
 
 machineName :: Parser MachineName
 machineName = lexeme $ try $ do
-    mname  <- lexeme $ 
-        many1 (satisfy $ \x -> isLetter x || isDigit x)
+    mname  <- (lexeme $ 
+        some (satisfy $ \x -> isLetter x || isDigit x)) <?> "Error parsing machine names. Machine names may only consists of upper/lowercase letters or digits."
     return $ MachineName $ T.pack $ mname
 
 
@@ -820,7 +816,7 @@ data NamedMachine = NamedMachine MachineName (MachineArrow T.Text) deriving (Sho
 
 factory :: Parser NamedMachine
 factory = lexeme $ try $ do
-    name   <- lexeme $ many1 (satisfy $ \x -> isLetter  x || isDigit x)
+    name   <- lexeme $ some (satisfy $ \x -> isLetter  x || isDigit x)
     void $ lexeme $ string "="
     mach <- machineArrow
     return $! NamedMachine (MachineName . T.pack $ name) mach 
@@ -842,20 +838,16 @@ machineArrow = lexeme $ try $ do
                     rest <- machineArrow 
                     return $ a :~> rest
                 "~+>" -> do
-                    rest <- many1 machineArrParens
+                    rest <- some machineArrParens
                     return $   a :~+> rest
                 ":|"  -> return $  a :| ()
 
-arrSymb :: Parser String 
+arrSymb :: Parser T.Text
 arrSymb =  (lexeme $ try $ string "~>") <|> (lexeme $ try $ string "~+>") 
 
 
-endNothing :: forall a. Parser (Maybe a)
-endNothing = lexeme $ try $ do
-    _ <- eof
-    return Nothing 
 
-voidEof :: Parser String
+voidEof :: Parser T.Text
 voidEof = lexeme $ try $ do
     _ <- eof
     return ":|"
@@ -863,7 +855,7 @@ voidEof = lexeme $ try $ do
 
 untilArr :: Parser T.Text
 untilArr = lexeme $ try $ do
-    first <- lexeme $ manyTill anyChar (lookAhead arrSymb <|> lookAhead (string "(") <|> voidEof)
+    first <- lexeme $ manyTill anySingle (lookAhead arrSymb <|> lookAhead (string "(") <|> voidEof)
     sep   <- voidEof <|>  (lookAhead $ lexeme . try $ string "(") <|>  (lookAhead arrSymb)
     case sep of
         "(" -> do
@@ -873,7 +865,7 @@ untilArr = lexeme $ try $ do
             rest <- untilArr
             return $ T.pack first <>  btwn <> rest
         "[" -> do
-            btwn <- manyTill anyChar (lookAhead . lexeme $ char '[')
+            btwn <- manyTill anySingle (lookAhead . lexeme $ char '[')
             void . lexeme $ char ']' 
             rest <- untilArr
             return $ T.pack (first <> "[" <> btwn <> "]") <> rest
@@ -884,33 +876,33 @@ notSep = lexeme . try $ many $ satisfy (\x -> x `notElem` ("()" :: String))
 
 builder :: Parser a -> Parser (V.Vector a)
 builder p = lexeme $ try $ do
-    first <- between 
+    first <- (between 
             (lexeme $ char '[') 
             (lexeme $ char ']') 
-            (p  `sepBy1` (lexeme $ char ';') )
+            (p  `sepBy1` (lexeme $ char ';') )) <?> "Error: Expected a builder. A builder has the form [ <SOMETHING> ; <MAYBE SOMETHING ELSE> ]"
     return $! V.force $ V.fromList $ first 
         
 recParens :: Parser T.Text
 recParens = lexeme $ try $ do 
     void . lexeme $ open 
-    first <- manyTill anyChar (lookAhead open <|> lookAhead close)
+    first <- manyTill anySingle (lookAhead open <|> lookAhead close)
     c <- lookAhead . lexeme $ open <|> close
     case c of
         '(' -> do
-            child <- many1 recParens
-            rest  <- manyTill anyChar close 
+            child <- (some recParens) <?> "Error: Mismatched parentheses (maybe?)"
+            rest  <- manyTill anySingle close 
             return $ "(" <> T.pack first <> T.concat child <> T.pack rest <> ")" 
         ')' -> do
-            void . lexeme $ close 
+            (void . lexeme $ close ) <?> "Error: Mismatched parentheses (maybe?)"
             return $ "(" <> T.pack first <> ")"
 
 
    where
        open :: Parser Char
-       open = lexeme . try $ char '('
+       open = (lexeme . try $ char '(') <?> "Error: Expected an open paren '('"
 
        close :: Parser Char
-       close = lexeme . try $ char ')'
+       close = (lexeme . try $ char ')') <?> "Error: Expected a close paren ')' "
 
 writeMode :: Parser WriteMode
 writeMode = wr <|> apnd
@@ -921,5 +913,5 @@ writeMode = wr <|> apnd
             return $ Write
         apnd :: Parser WriteMode
         apnd = lexeme $ try $ do
-            void $ string "append"
+            (void $ string "append") <?> "Error: Invalid write mode. Valid write modes are 'write' and 'append'"
             return $ Append

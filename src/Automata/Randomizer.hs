@@ -83,6 +83,7 @@ import qualified Data.Vector as V
 import Generics.SOP () 
 import Data.Bits ( Bits((.&.)) )
 import THRandom ( deriveRandomize, gRandom )
+import Control.Monad (replicateM)
 
 
 
@@ -104,7 +105,7 @@ randomize n = V.force <$> V.replicateM n (random @a)
 randomize' :: Int -> Randomizer a -> Randomizer (V.Vector a)
 randomize' n r = case n of 
     0  -> pure V.empty
-    _  -> V.replicateM n r
+    _  -> V.force <$> V.replicateM n r
 
 randomize'' :: Int -> Randomizer a -> [Randomizer a]
 randomize'' n r = replicate n r
@@ -134,7 +135,7 @@ instance Randomize Word32 where
 randoBString :: Randomizer BS.ByteString
 randoBString = do 
     s <- get
-    let (len,seed') = runRandomizer s $ random @Word16
+    let (len,seed') = runRandomizer s $ random @Word8
     let !bs = fst $ BS.unfoldrN (fromIntegral len) (randoBS) s
     put seed'
     return $! bs  
@@ -142,7 +143,8 @@ randoBS :: PureMT -> Maybe (Word8,PureMT)
 randoBS seed = Just $ runRandomizer seed $ random @Word8 
 
 instance Randomize (BS.ByteString) where
-    random = randoBString 
+    random = let len =  sum . map (\x -> fromIntegral x :: Int) <$> mapM (\x -> random @Word8) [1..7] 
+             in len >>= \l -> mapM (\x -> random @Word8) [0..l] >>= \w8s -> pure (BS.pack w8s)
 
 
 

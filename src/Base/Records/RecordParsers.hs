@@ -1,8 +1,8 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell, OverloadedStrings #-}
 module RecordParsers where
 
-import Text.Parsec
-import Text.Parsec.Text
+import Text.Megaparsec
+import Text.Megaparsec.Char
 import RecordTypes 
 import qualified Data.Text as T
 import PrimParsers
@@ -16,7 +16,7 @@ protocolStrs = $mkProtocolStrings -- ["ETH","ARP","IP4","TCP","ICMP","UDP","DNS"
 
 protocolType :: Parser T.Text
 protocolType = lexeme $ try $ do
-    typeString <- lexeme $ many1 $ satisfy (\x -> isLetter x || isDigit x)
+    typeString <- lexeme $ some $ satisfy (\x -> isLetter x || isDigit x)
     if (map toUpper typeString) `elem` protocolStrs
         then return $ T.pack $ (map toUpper typeString)
         else fail $ "Error: " <> typeString <> " is not a supported protocol."
@@ -55,7 +55,7 @@ predicate p =  (parseOR p) <|> (parseAND p) <|> parseNOT p <|> (parseATOM p)
 ------
 opticStrings :: Parser OpticStrs
 opticStrings= lexeme $ try $ do
-     oStrs <- lexeme $ many1 (satisfy $ \x -> isLetter x || x == '.') 
+     oStrs <- lexeme $ some (satisfy $ \x -> isLetter x || x == '.') 
      return $! opticStrToList $ T.pack oStrs
    where
     opticStrToList :: T.Text -> [T.Text]
@@ -109,7 +109,7 @@ fieldBuilderExp = lexeme $ try $ do
            return AllDefaults
        
        fieldBuilders = lexeme $ try $ do 
-           fs <- many1 fieldBuilder
+           fs <- some fieldBuilder
            return $! FieldBuilderExp fs 
 
 fieldBuilder :: Parser FieldBuilder
@@ -205,7 +205,7 @@ fieldSelectorPlus = lexeme $ try $ do
 
 fieldSelector :: Parser FieldSelector 
 fieldSelector =  lexeme $ try $ do
-    oStrs       <- opticStrings
+    oStrs       <- opticStrings 
     myComp      <- comp
     myCompareTo <- literal <|> compareToWC 
     return $! FieldSelector oStrs myComp myCompareTo 
@@ -265,7 +265,7 @@ comp = eq' <|> noteq' <|> lt' <|> lte' <|> gt' <|> gte'
         
         gte' :: Parser Comp
         gte' = lexeme $ try $ do
-            void $ lexeme $ string ">="
+            void $ lexeme $ string ">=" 
             return $! GTE' 
 
 operation :: Parser Operation
@@ -274,11 +274,11 @@ operation = plus <|> minus
         plus :: Parser Operation
         plus = lexeme $ try $ do
             void $ lexeme $ char '+'
-            myWord <- lexeme $ many1 (satisfy isDigit)
+            myWord <- lexeme $ some (satisfy isDigit)
             return $! Plus (read myWord :: Word )
 
         minus :: Parser Operation
         minus = lexeme $ try $ do
             void $ lexeme $ char '-'
-            myWord <- lexeme $ many1 (satisfy isDigit)
+            myWord <- lexeme $ some (satisfy isDigit)
             return $! Minus (read myWord :: Word ) 

@@ -16,8 +16,7 @@ import qualified Data.Map as Map
 import MachineParser 
 import SourceManager  
 import PrimParsers ( parseLex, lexeme ) 
-import Text.Parsec.Text
-import Text.Parsec  
+import Text.Megaparsec  
 
 import Data.Machine
 import CommandParser 
@@ -42,7 +41,7 @@ machineController uChan =  do
                     "Error: Invalid expression in input string: \n\"" 
                     <> fromUser 
                     <> "\"\nParser error information: \n" 
-                    <> T.pack (show err) 
+                    <> err
             Right userInput ->
                 case userInput of
                     Command str -> do
@@ -67,7 +66,7 @@ runCommand str = case parseLex commands str of
             "Error: Invalid command string:\n\""
             <> str
             <> "\"\nParser error information:\n"
-            <> T.pack (show err) 
+            <> err
     Right aCommand -> do
         e <- ask
         liftIO $ runReaderT aCommand e

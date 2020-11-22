@@ -140,7 +140,7 @@ library
     , mtl
     , async
     , time
-    , parsec
+    , megaparsec
     , text
     , stm 
     , generics-sop

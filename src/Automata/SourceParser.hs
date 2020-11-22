@@ -3,14 +3,14 @@
 
 module SourceParser where 
 
-import Text.Parsec.Text 
+import Text.Megaparsec.Char
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import qualified PacketOperations as PO
 import FactoryTypes
 import Control.Monad
 import PrimParsers
-import Text.Parsec
+import Text.Megaparsec
 import MachineParser (builder)
 import PacketIO 
 import Data.Proxy 
@@ -33,9 +33,9 @@ generateS :: SourceParser
 generateS = lexeme $ try $ do
     void $ lexeme $ string "generate"
     void . lexeme $ string "wait="
-    dly <-   lexeme $ many1 (satisfy isDigit)
+    dly <-   lexeme $ some (satisfy isDigit)
     void . lexeme $ string "repeat="
-    rpts <-  lexeme $ many1 (satisfy isDigit)
+    rpts <-  lexeme $ some (satisfy isDigit)
     bld <- builder protocolBuilder
     let ps =  V.force <$> V.mapM PO.makeProtocolMessageV2 bld
     case ps of
@@ -57,8 +57,9 @@ genRandomS = lexeme $ try $ do
     case myVec of
         Left err -> return . return $ Left err
         Right vec -> return $ do
-            s <- ask >>= \e' -> (liftIO . readTVarIO $ e') >>= \e -> 
-                return $ view randSeed e 
+            s <- ask >>= \e' -> 
+                (liftIO . readTVarIO $ e') >>= \e -> 
+                    return $ view randSeed e 
             let (!vecs, newSeed) = PO.randomPs n s vec
             return $! Right . Generator $ generator vecs (Just rpts) (Just dly)
 
@@ -93,7 +94,7 @@ teaS = lexeme $ try $ do
 
 sourceNm :: Parser T.Text
 sourceNm = lexeme $ try $ do
-    s <- many1 $ satisfy (\x -> isLetter x || isDigit x || x == '_')
+    s <- some $ satisfy (\x -> isLetter x || isDigit x || x == '_')
     return . T.pack $ s 
 
 
@@ -138,7 +139,7 @@ sourceByName = lexeme $ try $ do
 
 sources :: SourceParser
 sources = lexeme $ try $ do
-    first <- lookAhead (many1 $ satisfy (/= ' '))
+    first <- lookAhead (some $ satisfy (/= ' '))
     case first of
         "listen"       -> listenS
         "generate"     -> generateS

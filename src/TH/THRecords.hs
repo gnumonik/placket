@@ -266,8 +266,6 @@ deriveStringyLens nm = do
                     Just ns -> do
                         sumProds <- sortSumProd ns
 
-                        let sumChildrenNames = lefts sumProds
-
 
                         children <- concatMapM deriveStringyLens $ deduplicate ns
                         myUpdateMatches <- makeRecCUpdateMatch n myVBTs

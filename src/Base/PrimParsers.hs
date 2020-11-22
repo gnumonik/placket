@@ -11,8 +11,8 @@ import           Classes              (DNSLabel (DNSLabel), DNSName (DNSName),
                                        MessageContent (MessageContent),
                                        Word24 (..))
 import           PrimFuncs            (makeWord16, makeWord32)
-import           Text.Parsec          
-import           Text.Parsec.Text   (Parser)
+import           Text.Megaparsec     
+import           Text.Megaparsec.Char     
 
 import           Control.Monad     
 import qualified Data.Text as T  
@@ -31,21 +31,27 @@ import           Text.Hex
 import Data.Monoid
 import Data.Functor.Identity
 
+type Parser = Parsec T.Text T.Text 
+
+
+instance ShowErrorComponent T.Text where
+    showErrorComponent x = concatMap (\x -> T.unpack x <> "\n") $ T.lines x
+
 -- To Do: Organize this module
 
 -- toDec from https://stackoverflow.com/questions/5921573/convert-a-string-representing-a-binary-number-to-a-base-10-string-haskell
 
 filePath :: Parser FilePath 
 filePath = lexeme $ try $ do
-    void $ char '"'
-    path <- many1 $ satisfy (/= '"')
-    void $ char '"'
+    (void $ char '"') <?> "\""
+    path <- some $ satisfy (/= '"')
+    (void $ char '"') <?> ("Error: No closing parentheses after " <> path)
     return path 
 
 
 int :: Parser Int
 int = lexeme $ try $ do
-    n' <- many1 $ satisfy isDigit 
+    n' <- some $ satisfy isDigit 
     let n = read n' :: Int
     return n 
 
@@ -56,7 +62,7 @@ toDec = foldl' (\acc x -> acc * 2 + digitToInt x) 0
 
 hex :: Parser String
 hex = lexeme $ try $ do
-    h <- many1 (satisfy (\x -> x `elem` ("abcdef0123456789" :: [Char] )))
+    h <- (some (satisfy (\x -> x `elem` ("abcdef0123456789" :: [Char] )))) <?> "Error parsing hex value: Invalid char. (Valid hex characters are the letters a-f and the numbers 0-9."
     return $!  h
 
 hex0x :: Parser Int
@@ -70,16 +76,21 @@ hex0x = lexeme $ try $ do
 bin0b :: Parser Int
 bin0b = lexeme $ try $ do
     void $ string "0b"
-    b <- many1 (satisfy $ \x -> x == '0' || x == '1')
+    b <- some (satisfy $ \x -> x == '0' || x == '1')
     let b' = fromIntegral $ toDec b
     return b' 
 
 
-parse' :: Parser a -> T.Text -> Either ParseError a
+parse' :: Parser a -> T.Text -> Either (ParseErrorBundle T.Text T.Text) a
 parse' p = parse p ""
 
-parseLex ::  Parser a -> T.Text -> Either ParseError a
-parseLex p = parse' (lexeme $ p) 
+
+
+
+parseLex :: Parser b -> Text -> Either Text b
+parseLex p txt = case parse' (lexeme $ p) txt of
+    Right a -> Right a
+    Left err -> Left . T.pack $ errorBundlePretty err 
 
 lexeme :: Parser a -> Parser a
 lexeme p = do
@@ -89,14 +100,14 @@ lexeme p = do
 
 range :: Parser (T.Text,T.Text)
 range = lexeme $ try $ do
-    first  <- lexeme $ many1 (satisfy $ \x -> x `notElem` ("- []()~" :: [Char]))
+    first  <- lexeme $ some (satisfy $ \x -> x `notElem` ("- []()~" :: [Char]))
     void $ lexeme $  char '-'
-    second <- lexeme $ many1 (satisfy (\x -> x `notElem` ("- []()~" :: [Char])))
+    second <- lexeme $ some (satisfy (\x -> x `notElem` ("- []()~" :: [Char])))
     return $ (T.pack first,T.pack second)
 
 singleValue :: Parser T.Text
 singleValue = lexeme $ try $ do
-    val <-  many1 (satisfy $ \x -> x `notElem` ("- []]()~" :: [Char]))
+    val <-  some (satisfy $ \x -> x `notElem` ("- []]()~" :: [Char]))
     return $! T.pack val 
 
 
@@ -123,7 +134,7 @@ word8 = word8B <|> word8H <|> word8D
    where 
     word8D :: Parser Word8 
     word8D = lexeme $ try $ do 
-        myInt <- many1 digit
+        myInt <- some digitChar
         let n = read myInt :: Int
         if n < (fromIntegral $ (minBound :: Word8)) || n > (fromIntegral $ (maxBound :: Word8))
             then fail $ "Error: Value " ++ show myInt ++ " exceeds the bounds of a Word8 (0-255)"
@@ -148,7 +159,7 @@ word16 = word16B <|> word16H <|> word16D
    where
     word16D :: Parser Word16 
     word16D = lexeme $ try $ do
-        myInt <- many1 digit
+        myInt <- some digitChar
         let n = read myInt :: Int
         if n < (fromIntegral $ (minBound :: Word16)) || n > (fromIntegral $ (maxBound :: Word16))
             then fail $ "Error: Value exceeds the bounds of a Word16 : (" ++ show  (minBound :: Word32) ++ "-" ++ show (maxBound :: Word32) ++ ")"
@@ -174,7 +185,7 @@ word24 = word24B <|> word24H <|> word24D
    where
     word24D :: Parser Word24
     word24D = lexeme $ try $ do
-        myInt <- many1 digit
+        myInt <- some digitChar
         let n = read myInt :: Int
         if n < 0 || n > 16777215
             then fail $ "Error: Value exceeds the bounds of a Word24 : (" ++ show  (0 :: Int)  ++ "-" ++ show (16777215 :: Int) ++ ")"
@@ -205,7 +216,7 @@ word32 = word32B <|> word32H <|> word32D
    where 
 
     word32D = lexeme $ try $ do
-        myInt <- many1 digit
+        myInt <- some digitChar
         let n = read myInt :: Int
         if n < (fromIntegral $ (minBound :: Word32)) || n > (fromIntegral $ (maxBound :: Word32))
             then fail $
@@ -296,7 +307,7 @@ byteString = hexBS <|> asciiBS
     asciiBS :: Parser ByteString
     asciiBS = lexeme $ try $ do
         void $ lexeme $ char '\"'
-        aString <- many1 (satisfy $ (/= '\"')) 
+        aString <- some (satisfy $ (/= '\"')) 
         void $ lexeme $ char '\"'
         return $  BSU.fromString aString
 
@@ -317,7 +328,7 @@ flag = flagBool <|> flagNum
     
     bool :: Parser Bool
     bool = lexeme $ try $ do
-            myChar <- anyChar
+            myChar <- letterChar
             case toUpper myChar of
                 'T' -> return True
                 'F' -> return False
@@ -332,7 +343,7 @@ dnsName = lexeme $ try $ do
   where
       dnspointer = lexeme $ try $ do
           void $ lexeme $ string $ "POINTER:"
-          n <- many1 digit
+          n <- some digitChar
           return $ (DNSPointer (read n :: Word16), DNSLabel BS.empty)
 
       dnsnamelabel = lexeme $ try $ do
@@ -360,7 +371,7 @@ alwaysFail = lexeme $ try $ do
 
 
 
-opticsParser :: String -> a -> Parser a
+opticsParser :: T.Text -> a -> Parser a
 opticsParser str o = lexeme $ try $ do
     void $ lexeme $ string str
     return  o

@@ -100,9 +100,7 @@ mkFactory mData pSrc = do
                 writeChan dChan $
                     "\nError: Them machine named " 
                     <> (mchName nm)
-                    <> "is already running. If you would like to "
-                    <> "activate a copy of this machine, please use the"
-                    <> "`clone` command."
+                    <> "is already running."
                 return Nothing    
 
 

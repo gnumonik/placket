@@ -43,20 +43,8 @@ import Data.Proxy ( Proxy(..) )
 import Data.Typeable ( typeOf )
 import Staging 
 import FieldClasses
-    (PrettyPrint, CanParse(parseIt),
-      MaybeEnum(maybeFromTo),
-      PackVal(..),
-      Primitive,
-      StringyLens(..),
-      Value )
 import PrimTypes
-    ( EthernetFrame,
-      ARPMessage,
-      IP4Packet,
-      ICMPMessage,
-      UDPMessage,
-      TCPSegment,
-      DNSMessage )
+import PrettyPrint 
 import RecordTypes
     ( ProtocolType,
       Comp(..),
@@ -75,28 +63,18 @@ import RecordTypes
       MsgSelectorExp(..) ) 
 import THWrappers 
 import Wrappers 
-import Text.Parsec.Text ()
 import Control.Monad ( (<=<), (>=>) )
 import qualified Data.Vector as V
-import Control.Lens 
-import Data.Either 
 import Classes 
 import Data.Monoid 
 import GPrettyPrint
 import THPrettyPrint 
 
-{--
-deriveStringyLens ''EthernetFrame
-deriveStringyLens ''IP4Packet
-deriveStringyLens ''ARPMessage
-deriveStringyLens ''DNSMessage
-deriveStringyLens ''ICMPMessage
-deriveStringyLens ''TCPSegment
-deriveStringyLens ''UDPMessage
---}
 
 
+ppDeriver
 
+derivePrettyPrint True ''ProtocolMessage 
 withProtocol :: ProtocolType
              -> (forall a. (Possibly a ProtocolMessage, Default a, StringyLens a, Randomize a, PrettyPrint a) 
                 => Proxy a 
@@ -145,6 +123,9 @@ mkUpdate str opticStrs f = case T.map toUpper str of
     _      -> Left $ "Error: " <> str <> " is not a valid protocol type."
 
 
+dropProxy :: T.Text -> T.Text
+dropProxy x = T.unwords . drop 2 . T.words $ x
+
 setFields :: forall a. Primitive a 
           => Field 
           -> Proxy a 
@@ -155,7 +136,7 @@ setFields fExp p =  case fExp of
 
          Just v -> Right $ [const v]
 
-         Nothing -> Left $ "Error: Could not parse \"" <> s <> "\" as a message primitive of type " <> T.pack (show $ typeOf p)
+         Nothing -> Left $ "Error: Could not parse \"" <> s <> "\" as a message primitive of type " <> (dropProxy . T.pack . show $ typeOf p)
 
      RangeOfVals start end-> case maybeFromTo @a of
 
@@ -163,7 +144,7 @@ setFields fExp p =  case fExp of
 
              Just [x,y] -> Right $ map (\val -> const val) $ fTo x y
 
-             _          -> Left $ "Error: Could not parse \"" <> start <> "\" or \"" <> end <> "\" as a message primitive of type " <> T.pack (show $ typeOf p)
+             _          -> Left $ "Error: Could not parse \"" <> start <> "\" or \"" <> end <> "\" as a message primitive of type " <> (dropProxy . T.pack . show $ typeOf p)
 
          Nothing -> Left $ "Error: " <> T.pack (show $ typeOf p) <> " cannot be enumerated into a range of values. "
 
@@ -171,7 +152,7 @@ setFields fExp p =  case fExp of
  
          Just vs -> Right $ map const vs
 
-         Nothing -> Left $ "Error: At least one value in the noncontiguous set: " <> T.pack (show xs) <> " could not be parsed as a message primitive of type " <> T.pack (show $ typeOf p)
+         Nothing -> Left $ "Error: At least one value in the noncontiguous set: " <> T.pack (show xs) <> " could not be parsed as a message primitive of type " <> (dropProxy . T.pack . show $ typeOf p)
 
 
  
@@ -217,7 +198,7 @@ makeProtocolFilter fExp p = case fExp of
 
          Just v -> Right $ \a -> a == v
 
-         Nothing -> Left $ "Error: Could not parse \"" <> s <> "\" as a message primitive of type " <> T.pack (show $ typeOf p)
+         Nothing -> Left $ "Error: Could not parse \"" <> s <> "\" as a message primitive of type " <> (dropProxy . T.pack . show $ typeOf p)
 
      RangeOfVals start end-> case maybeFromTo @a of
 
@@ -225,7 +206,7 @@ makeProtocolFilter fExp p = case fExp of
 
              Just [x,y] -> Right $ \a ->  a >= x && a <= y
 
-             _          -> Left $ "Error: Could not parse \"" <> start <> "\" or \"" <> end <> "\" as a message primitive of type " <> T.pack (show $ typeOf p)
+             _          -> Left $ "Error: Could not parse \"" <> start <> "\" or \"" <> end <> "\" as a message primitive of type " <> (dropProxy . T.pack . show $ typeOf p)
 
          Nothing -> Left $ "Error: " <> T.pack (show $ typeOf p) <> " cannot be enumerated into a range of values. "
 
@@ -233,8 +214,7 @@ makeProtocolFilter fExp p = case fExp of
 
          Just vs -> Right $ \x -> or $ map (== x) vs
 
-         Nothing -> Left $ "Error: At least one value in the noncontiguous set: " <> T.pack (show xs) <> " could not be parsed as a message primitive of type " <> T.pack (show $ typeOf p)
-
+         Nothing -> Left $ "Error: At least one value in the noncontiguous set: " <> T.pack (show xs) <> " could not be parsed as a message primitive of type " <> (dropProxy . T.pack . show $ typeOf p)
 
 mkApplyTo :: Monoid c 
           =>  T.Text

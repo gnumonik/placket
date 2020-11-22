@@ -36,6 +36,7 @@ import TCP ()
 import UDP () 
 import DNS ()
 import Text.Hex (encodeHex)
+import PrettyPrint 
 
 type Builder a = V.Vector a 
 
@@ -243,7 +244,9 @@ instance PrettyPrint DNSName where
           $ dnsName' w
 
 instance PrettyPrint MessageContent where
-    pprint m w = pprint m (getMessage w)
+    pprint m w =  makeLabelRow "Message Content" 
+               <> (makeDataRow $ [pprint m (getMessage w)])
+               <> dashRow
 
 
 -----

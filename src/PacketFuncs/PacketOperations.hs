@@ -141,15 +141,18 @@ lift :: Builder ProtocolMessage
      -> Builder ProtocolMessage
 lift !bld !p = V.force $ V.snoc bld p
 
-randomPs :: Int -> PureMT -> V.Vector (Randomizer ProtocolMessage) -> (V.Vector (V.Vector ProtocolMessage),PureMT)
-randomPs n seed vecs = let r =  V.sequence vecs 
-                       in runRandomizer seed $ randomize' n r
 
+
+randomPs :: Int -> PureMT -> V.Vector (Randomizer ProtocolMessage) -> (V.Vector (V.Vector ProtocolMessage), PureMT)
+randomPs n seed vecs = runRandomizer seed $ V.sequence $ V.replicate n (seqRand vecs)
+
+seqRand :: V.Vector (Randomizer ProtocolMessage) -> Randomizer (V.Vector ProtocolMessage)
+seqRand  vec = V.sequence  vec 
 
 randomP :: V.Vector ProtocolType -> Either T.Text (V.Vector (Randomizer ProtocolMessage))
 randomP vec =  --V.sequence 
               V.force <$> V.mapM (join . (\x -> withProtocol x 
-             $ (\prox -> Right $ randomizeProtocol prox))) vec 
+                    $ (\prox -> Right $ randomizeProtocol prox))) vec 
 
 {--
 setFields :: (Functor f, Foldable t) => t (ProtocolMessage -> ProtocolMessage) -> f ProtocolMessage -> f ProtocolMessage

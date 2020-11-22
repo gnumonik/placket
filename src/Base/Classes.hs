@@ -31,9 +31,9 @@ import           Generics.SOP         (All2, Generic (Code), HasDatatypeInfo,
 import           Generics.SOP.TH      (deriveGeneric)
 import           Numeric              (showHex)
 import           PrimFuncs            (makeWord16, makeWord32, toWord64)
-import           Text.Parsec.String   (Parser)
+import           Text.Megaparsec    
 import qualified Data.Text as T
-import Control.Monad.State.Strict (State)
+import qualified Control.Monad.State.Strict as State 
 import System.Random.Mersenne.Pure64
 
 
@@ -60,7 +60,7 @@ mapToVec v = V.fromList . map snd . Map.toList $ v
 ----------------}
 
 
-type Randomizer = State PureMT 
+type Randomizer = State.State PureMT 
 
 class Randomize a where
     random :: Randomizer a

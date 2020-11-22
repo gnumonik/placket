@@ -82,7 +82,7 @@ gPrettyPrintSum  mode a = go (from a)
         gogo xss = case (hcollapse . hcmap (Proxy :: Proxy  PrettyPrint) (mapIK $ pprint mode) $ xss) of
             [x] -> x
             _   -> error "Impossible empty type!"
-
+{--
 
 instance PrettyPrint EthernetFrame where
     pprint m x = gPrettyPrint "Ethernet" m x 
@@ -284,4 +284,6 @@ instance PrettyPrint ProtocolMessage where
         CONTENTm (MessageContent y) -> makeLabelRow "Message Content"
                                      <> (makeDataRow [pprint m y])
                                      <> dashRow 
+
+--}
 
