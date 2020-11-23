@@ -154,8 +154,5 @@ randomP vec =  --V.sequence
               V.force <$> V.mapM (join . (\x -> withProtocol x 
                     $ (\prox -> Right $ randomizeProtocol prox))) vec 
 
-{--
-setFields :: (Functor f, Foldable t) => t (ProtocolMessage -> ProtocolMessage) -> f ProtocolMessage -> f ProtocolMessage
-setFields setFuncs bld =  applySetters setFuncs bld
---}
+
 

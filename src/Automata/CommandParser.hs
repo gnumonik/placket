@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE OverloadedStrings, TypeApplications, ScopedTypeVariables #-}
 
@@ -26,7 +27,7 @@ import MyReaderT
 import RecordFuncs (formatList)
 import Data.Maybe
 import SourceParser 
-import PacketSources (reduceSource)
+import PacketSources (capSource, reduceSource)
 import UtilityMachines (writeChan)
 import qualified Data.Text.IO as TIO 
 import Control.Monad.State.Strict (execStateT)
@@ -34,10 +35,16 @@ import Data.List (foldl')
 import Control.Monad
 import qualified Control.Exception as E 
 import Data.Hashable 
+import Data.Time.Clock 
 import Data.Time.Clock.System 
-import Data.Word (Word16, Word32)
+import PrettyPrint 
+import Data.Word (Word8, Word16, Word32)
 import Numeric 
+import Control.Concurrent (threadDelay)
+import Data.Either (isRight)
 
+tShow :: forall x. Show x => x -> T.Text 
+tShow = T.pack . show 
 
 type Command = MyReader () 
 
@@ -53,13 +60,18 @@ commands = lexeme $ try $ do
         "showMachines"   -> showMachines
         "showSources"    -> showSources
         "debugServer"    -> debugServer
-        "stop"           -> stopMachines
+        "stop"           -> stopFactory
         "stopAll"        -> stopAll
-        "run"            -> run'
+        "start"          -> startF 
+        "run"            -> runF
+        "kill"           -> killFactory
+        "killAll"        -> killAll
         "clearMachines"  -> clearMachines
         "clearSources"   -> clearSources
         "deleteSource"   -> deleteSource
         "deleteMachine"  -> deleteMachine
+        "deleteFactory"  -> deleteF
+        "clearFactories" -> clearFactories
         _                -> fail $ "Error: " <> first <> " is not a valid packet string, or perhaps you forgot to preface a machine definition with m:, or a source definition with s:"
 
 
@@ -82,8 +94,12 @@ saveFile = lexeme $ try $ do
         dat <- map ((\x -> "{ m: " <> x <> " }\n") . view schema . snd ) 
              . Map.toList <$> askForMachineData
         sdat <- map ((\x -> "{ s: " <> x <> "} \n") . view srcSchema . snd) 
-             . Map.toList <$> askForSourceIDs 
-        let defs = dat <> sdat 
+             . Map.toList <$> askForSourceData
+        fdat <-  map formatFactory 
+              .  map snd 
+              .  Map.toList 
+             <$> askForFactories  
+        let defs = dat <> sdat <> fdat
         case mode of
             Write -> do
                 (a :: Either IOError ()) <- liftIO $ E.try (TIO.writeFile fPath "")
@@ -95,6 +111,15 @@ saveFile = lexeme $ try $ do
                     Left err -> writeChan d . T.pack . show $ err 
             Append -> do
                 liftIO $ mapM_ (TIO.appendFile fPath) defs
+   where
+     formatFactory :: Factory -> T.Text
+     formatFactory myFac = "{ f: " 
+                          <> myFac ^. facName 
+                          <> " = "
+                          <> myFac ^. (mchData . schema)
+                          <> " >> "
+                          <> myFac ^. (srcData . srcSchema)
+                          <> " }\n"
 
 
 loadFile :: Parser Command
@@ -114,25 +139,31 @@ loadFile = lexeme $ try $ do
                                     <> (T.pack fPath)
                                     <> "\nParser error info: " 
                                     <>  err 
-                    Right function -> do
-                        function
+                    Right action -> do action
 
 
 showStats :: Parser Command
 showStats = lexeme $ try $ do
     void . lexeme $ string "showStats"
     return $ do
-        dat <- askForMachineData
-        myStats        <- liftIO 
-                        . mapM (\x -> readTVarIO $ x ^. pktCountIn) 
-                        . map snd $ Map.toList dat 
-        let myMachines = Map.foldr (\x acc -> (mchName $ x ^. machineNm) : acc ) [] dat
-        let pretty = T.concat $ foldr 
-                  (\(a,b) acc -> (a <> ": " <> (T.pack . show $ b) <> "\n") : acc ) [] 
-                  $ zip myMachines myStats 
-        d <- askForDisplayChan
-        writeChan d pretty 
-
+        dat <- Map.toList <$> askForFactories
+        myStats <- mapM go dat 
+        display $  dashRow 
+               <> T.concat (map makeDataRowLJ myStats)
+               <> dashRow 
+  where
+    go :: (Word16,Factory) -> MyReader [T.Text]
+    go (w16,fac) = 
+      let inVar  = fac ^. pktCountIn
+          outVar = fac ^. pktCountOut 
+          fID    = w16 
+          fName  = fac ^. facName
+      in liftIO (readTVarIO inVar) >>= \inCount -> 
+            liftIO (readTVarIO outVar) >>= \outCount -> 
+              return $ ["Name: " <> fName
+                       ,"ID#: "  <> tShow fID 
+                       ,"Packets in: " <> tShow inCount
+                       ,"Packets out: " <> tShow outCount ]
 
 showArpTables :: Parser Command
 showArpTables = lexeme $ try $ do
@@ -161,142 +192,192 @@ showSources :: Parser Command
 showSources = lexeme $ try $ do
     void . lexeme $ string "showSources"
     return $! do
-        ss <- askForSourceIDs
+        ss <- askForSourceData
         let pretty = foldr (\x acc -> fst x <> " :: " <> (snd x) ^. srcSchema : acc) [] $ Map.toList ss
         chan <- askForDisplayChan  
-        let mySourceIDs = formatList "\nAvailable sources: " $ pretty
-        liftIO . atomically . writeTChan chan $ mySourceIDs
+        let mysourceData = formatList "\nAvailable sources: " $ pretty
+        liftIO . atomically . writeTChan chan $ mysourceData
 
 
---- Fix this to interact w/ the packet server and integrate the packet server into useragent
-run' :: Parser Command
-run'  = lexeme $ try $ do
-    void $ lexeme $ string "run:"
-    pSrc' <- sources 
-    void $ lexeme (string ">>")
-    machine <- some anySingle
-    return $! do
-        pSrc <- pSrc'
-        dChan <- askForDisplayChan
-        case pSrc of 
-            Left err -> do 
 
-                liftIO . atomically . writeTChan dChan $ err
-            Right src -> do
-                t <- askForTagCount
-                newName <- mkRandomName t 
-                let mySchema = newName <> " = "  <> (T.pack machine)
-                machineBuilder mySchema 
-                mach <- getMachineDataByName (MachineName $ newName)
+runF :: Parser Command 
+runF = lexeme $ try $ do
+    void . lexeme $ string "run:"
+    rawSource <- lexeme $ manyTill anySingle (lookAhead $ string ">>")
+    void . lexeme $ string ">>"
+    rawMachine <- some anySingle 
+    return $ do
+      mabSrc <- sourceBuilder Anonymous (T.pack rawSource)
+      mabMch <- machineBuilder Anonymous (T.pack rawMachine)
+      mabFac <- pure mabSrc >>= \case 
+                  Nothing -> return Nothing
+                  Just aSrc -> pure aSrc >>= \mySrc -> 
+                    pure mabMch >>= \case
+                      Nothing -> return Nothing
+                      Just aMch -> pure aMch >>= \myMch ->
+                        Just <$> mkFactoryV2 Nothing myMch mySrc
+      case mabFac of
+        Nothing -> return () 
+        Just (facID,myFac) -> do
+          let toRun = myFac ^. factory
+          myThread <- liftIO . async $ runT_ toRun 
+          theTime <- liftIO getCurrentTime 
+          let activeFac = set fThread (Just myThread) . set startTime (Just theTime) . set isActive True $ myFac 
+          modifyEnv $ over factories (Map.insert facID activeFac)
+          sq <- askForServerQueue
+          liftIO . atomically . writeTBQueue sq $ GIMMEPACKETS (fromIntegral facID) (activeFac ^. fQueues)
+          display $ "Successfully activated Factory " 
+                  <> (T.pack . (\x -> showHex x "") $ facID) 
+                  <> ":\n" 
+                  <>  (T.pack rawSource) <> " >> " <> (T.pack rawMachine)
 
-                case mach of
-                    Right mach' -> do
-                        mData@(MachineData _ b _ _ _ _ _ _)  <- pure mach'
-                        tag <- getMachineTag b 
-                        when (isJust tag) $ do 
 
-                            theSource@(Plugged _ sourceQs)  <- reduceSource src
 
-                            theMachine <- mkFactory mData theSource 
-                            when (isJust theMachine ) $ do                
-                                async1 <- liftIO . async $! runT_ $ fromJust theMachine
+factoryBuilder :: T.Text -> MyReader () 
+factoryBuilder txt =
+  except (parseLex splitFactory txt) >>= \case
+    Nothing -> return ()
+    Just (nmTxt,srcTxt,mchTxt) -> 
+      sourceBuilder Anonymous srcTxt >>= \case
+        Nothing -> return ()
+        Just mySrc ->  machineBuilder Anonymous mchTxt >>= \case
+          Nothing -> return ()
+          Just myMch -> mkFactoryV2 (Just nmTxt) myMch mySrc >>= \(fID,myFac) ->
+            modifyEnv (over factories $ Map.insert fID myFac) >> 
+            display ("Succesfully parsed factory " <> nmTxt)
+ where
+    splitFactory :: Parser (T.Text,T.Text,T.Text)
+    splitFactory = lexeme $ try $ do
+      space
+      fName <- T.pack <$>  (lexeme $ some (satisfy $ \x -> isLetter x || isDigit x))
+      space
+      void . lexeme $ char '='
+      rawSource <- T.pack <$> (lexeme $ manyTill anySingle (lookAhead $ string ">>"))
+      void . lexeme $ string ">>"
+      rawMachine <- T.pack <$> some anySingle
+      return $ (fName,rawSource,rawMachine)
 
-                                sq <- askForServerQueue
+data InitMode = AlreadyThere | NeedsInserted deriving (Show, Eq)
 
-                                liftIO . atomically . writeTBQueue sq $ GIMMEPACKETS (fromJust tag) sourceQs
+initFactory :: InitMode -> Word16 -> Factory -> MyReader () 
+initFactory iMode fID myFac = do 
+    let toRun = myFac ^. factory
+    myThread <- liftIO . async $ runT_ toRun 
+    theTime <- liftIO getCurrentTime 
+    let activeFac = set fThread (Just myThread) . set startTime (Just theTime) . set isActive True $ myFac 
+    when (iMode == NeedsInserted) $ do 
+      modifyEnv $ over factories (Map.insert fID activeFac)
+    sq <- askForServerQueue
+    liftIO . atomically . writeTBQueue sq $ GIMMEPACKETS (fromIntegral fID) (activeFac ^. fQueues)
+    display $ "Successfully activated Factory " 
+            <> (T.pack . (\x -> showHex x "") $ fID) 
+            <> ":\n" 
+            <>  (activeFac ^. (srcData . srcSchema)) <> " >> " <> (activeFac ^. (mchData . schema))
 
-                                writeChan dChan  $! 
-                                    "Success! Activated machine: " <> newName 
-                                
-                                activateMachine (fromJust tag) async1 
-                                
 
-                    Left err -> writeChan dChan err 
+startF :: Parser Command
+startF = lexeme $ try $ do
+  void . lexeme $ string "start"
+  fName <- T.pack <$> lexeme (some (satisfy $ \x -> isLetter x || isDigit x))
+  return $ do
+    maybeFac  <- getFactoryByName fName
+    case maybeFac of
+      Nothing -> display $ "Cannot start factory " <> fName <> " because it does not exist"
+      Just (fID,myFac) -> initFactory AlreadyThere fID myFac 
 
-activateMachine :: Int -> (Async ()) -> MyReader ()
-activateMachine n asyn = do
-    e <- ask
-    liftIO . atomically . modifyTVar' e 
-        $ over packetMachines 
-            $ Map.adjust (f asyn) n
-  where
-      f :: (Async ()) -> MachineData -> MachineData
-      f x m = over thread (const $ Just x) $ over isActive (const True) m
 
 debugServer :: Parser Command
 debugServer = lexeme $ try $ do
     void . lexeme $ string "debugServer"
     return $! do
         s <- askForServerQueue
-        liftIO . atomically . writeTBQueue s $ SHOWACTIVE 
+        liftIO . atomically . writeTBQueue s $ SHOWACTIVE
 
-stopMachines :: Parser Command
-stopMachines = lexeme $ try $ do
-    void $ lexeme $ string "stop"
-    machIDs <- some machineName 
-    return $! do
-        d <- askForDisplayChan
-        
-        myIDs <- sequence <$> mapM getMachineDataByName machIDs
-        case  fmap (filter $ \x -> x ^. isActive) myIDs of
-            Right toKill -> do 
-                mapM_ kill toKill
-                writeChan d $ "Kill signal sent to machine(s): "  
-                           <> (T.concat $ map (\x -> mchName x <> " ") machIDs )
 
-            Left err -> do 
-                writeChan d err
+
+stopFactory :: Parser Command
+stopFactory = lexeme $ try $ do
+  void . lexeme $ string "stop"
+  facNm <- T.pack <$> lexeme (some (satisfy $ \x -> isLetter x || isDigit x))
+  return $ do
+      stopF facNm
+
+stopF :: T.Text -> Command 
+stopF fName = do 
+  maybeF <- getFactoryByName fName 
+  case maybeF of
+        Nothing -> display $ "Error! No factory named " <> fName <> " exists!"
+        Just (fID, toStop) -> runStop fID toStop
+
+runStop :: Word16 -> Factory -> Command 
+runStop fID toStop = do 
+    if toStop ^. isActive
+      then display $ "Factory " <> (toStop ^. facName) <> " cannot be stopped because it is not running."
+      else do
+        writeQ (toStop ^. srcQ)  STOP
+        writeQ (toStop ^. snkQ)  SINK_STOP
+        sq <- askForServerQueue
+        writeQ sq $ NOMOREPACKETS . fromIntegral $ fID
+        modifyEnv . over factories $ Map.adjust (set isActive False . set startTime Nothing) fID
+        display $ "Successfully stopped factory " <> (toStop ^. facName)
+
+
+killFactory :: Parser Command
+killFactory = lexeme $ try $ do
+  void . lexeme $ string "kill"
+  facIDStr <- T.pack <$> lexeme (some (satisfy $ \x -> isLetter x || isDigit x))
+  return $! do
+    killFac facIDStr 
+
+killFac :: T.Text -> Command 
+killFac fName  = do 
+  maybeF <- getFactoryByName fName 
+  case maybeF of
+      Nothing -> display $ "Error! No factory named " <> fName <> " exists!"
+      Just (fID, toKill) -> runKill fID toKill 
+      
+runKill :: Word16 -> Factory -> Command 
+runKill fID toKill = do
+        writeQ (toKill ^. srcQ)  STOP
+        writeQ (toKill ^. snkQ)  SINK_STOP
+        sq <- askForServerQueue
+        writeQ sq $ NOMOREPACKETS . fromIntegral $ fID
+        forM_ (toKill ^. fThread) (liftIO . uninterruptibleCancel)
+        modifyEnv . over factories $ Map.adjust (set isActive False . set fThread Nothing) fID
+        display $ "Successfully killed factory " <> (toKill ^. facName)
+
+
+deleteF :: Parser Command
+deleteF = lexeme $ try $ do
+  void . lexeme $ string "deleteFactory"
+  facIDStr <- T.pack <$> lexeme (some (satisfy $ \x -> isLetter x || isDigit x))
+  return $ do
+    fac <- getFactoryByName facIDStr
+    case fac of
+      Nothing -> display $ "Error: Cannot delete factory " <> facIDStr <> "because it does not exist"
+      Just (fID,_) -> killFac facIDStr >> modifyEnv (over factories $ Map.delete fID )
+
+clearFactories :: Parser Command
+clearFactories = lexeme $ try $ do
+  void . lexeme $ string "deleteFactories" 
+  return $ (Map.toList <$> askForFactories) >>= \fs -> 
+    mapM_ (uncurry runKill) fs >> (modifyEnv $ set factories Map.empty)
 
 stopAll :: Parser Command
 stopAll = lexeme $ try $ do
-    void . lexeme $ string "stopAll"
-    return $! do
-        d <- askForDisplayChan
+  void . lexeme $ string "stopAll"
+  return $ do
+    fs <- Map.toList <$> askForFactories
+    mapM_ (uncurry runStop) fs
 
-        dat <- askForMachineData 
-
-        mapM_ kill dat
-
-        let killed = foldr (\x acc -> x ^. machineNm : acc) [] dat
-
-        writeChan d $ "Kill signal sent to machines: " <> (T.concat $ map (\x -> mchName x <> " ") killed) 
-
-kill :: MachineData -> MyReader ()
-kill myData = do
-    MachineData _ nm q _ cnt _ a mq <- pure myData
-    case a of
-        Just a' -> liftIO $ uninterruptibleCancel a'
-        Nothing -> return ()
-
-    mt <- getMachineTag nm
-
-    s <- askForServerQueue
-
-    case mt of
-        Just t' -> do 
-            e <- ask  
-            liftIO . atomically . writeTBQueue s $ NOMOREPACKETS t'
-            mapM_ (\x -> liftIO . atomically $ flushTBQueue x) mq 
-            newQ <- liftIO $ newTBQueueIO 20000 
-            liftIO $ atomically . modifyTVar' e $ (kill' t') 
-            
-        Nothing -> return () 
-   where                
-    kill' :: Int ->  Environment -> Environment
-    kill' t e = 
-        let f = \x -> set isActive False $ set thread Nothing  x
-        in over packetMachines (Map.adjust f t) e
+killAll :: Parser Command
+killAll = lexeme $ try $ do
+  void . lexeme $ string "killAll"
+  return $ do
+    fs <-  Map.toList <$> askForFactories
+    mapM_ (uncurry runKill) fs
 
 
--- utility parsers
--- Some of this stuff should really be in another module, but here is the best place for avoiding  cyclinc imports. Will fix later. 
-
-mkRandomName :: Int -> MyReader (T.Text)
-mkRandomName n = do
-    MkSystemTime _ w <- liftIO getSystemTime
-    let mahHash = fromIntegral (hashWithSalt (fromIntegral w) n) :: Word16
-    let mahHex = T.pack $ showHex mahHash $ ""
-    return mahHex 
 
 all' :: Parser T.Text
 all' = lexeme $ try $ do
@@ -306,7 +387,7 @@ all' = lexeme $ try $ do
 list :: Parser a -> Parser [a]
 list p = lexeme $ try $ do
     parsed <- p
-    return $! [parsed]
+    return [parsed]
 
 unbracket :: Parser a -> Parser a
 unbracket p = lexeme $ try $ do
@@ -321,7 +402,7 @@ clearSources = lexeme $ try $ do
     void . lexeme $ string "clearSources"
     return $ do
         e <- ask
-        liftIO . atomically . modifyTVar' e $ set sourceIDs Map.empty 
+        liftIO . atomically . modifyTVar' e $ set sourceData Map.empty 
         d <- askForDisplayChan
         writeChan d $ "Successfully erased all sources."
 
@@ -330,52 +411,33 @@ deleteSource = lexeme $ try $ do
     void . lexeme $ string "deleteSource"
     s <- lexeme $ some $ satisfy (\x -> isLetter x || isDigit x)
     return $ do
-        sids <- askForSourceIDs
+        sids <- askForSourceData
         case Map.lookup (T.pack s) sids of
             Just x -> do
                 e <- ask
-                liftIO . atomically . modifyTVar' e $ over sourceIDs (Map.delete (T.pack s))
+                liftIO . atomically . modifyTVar' e $ over sourceData (Map.delete (T.pack s))
                 d <- askForDisplayChan
-                writeChan d $ "Successfully deleted source " <> (T.pack s)
+                writeChan d $ "Successfully deleted source " <> T.pack s
             Nothing -> do
                 d <- askForDisplayChan
-                writeChan d $ "Error: Could not delete source " <> (T.pack s) <> " because it does not exist"
-                 
+                writeChan d $ "Error: Could not delete source " <> T.pack s <> " because it does not exist"
+             
 deleteMachine :: Parser Command
 deleteMachine = lexeme $ try $ do
     void . lexeme $ string "deleteMachine"   
     s <- machineName
     return $ do
-        mData <- getMachineDataByName s 
-        case mData of
-            Left _ -> do
-                d <- askForDisplayChan
-                writeChan d $ "Error: Could not delete machine " <> mchName s <> "because it does not exist"
-            Right mData -> do
-                e <- ask
-                t <- getMachineTag s
-                d <- askForDisplayChan
-                case t of
-                    Just t' -> do  
-                        kill mData
-                        liftIO . atomically . modifyTVar' e $ over packetMachines (Map.delete t' )
-                        writeChan d $ "Successfully stopped and deleted machine " <> (mchName s)
-                    Nothing -> do
-                        d <- askForDisplayChan
-                        writeChan d $ "FATAL ERROR: MACHINE DATA EXISTS FOR " <> mchName s <> " BUT IT HAS NO INTEGER ID. EXITING PROGRAM."
-                        e <- ask
-                        liftIO . atomically . modifyTVar' e $ over cont (\x -> False)
+        modifyEnv $ over packetMachines (Map.delete s)
+        display $ "Successfully deleted machine " <> mchName s 
+
+
 
 clearMachines :: Parser Command
 clearMachines = lexeme $ try $ do
     void . lexeme $ string "clearMachines"
     return $ do
-        dat <- (map snd . Map.toList) <$> askForMachineData
-        mapM_ kill dat
-        e <- ask
-        d <- askForDisplayChan
-        liftIO . atomically . modifyTVar' e $ over packetMachines (\x -> Map.empty)
-        writeChan d $ "Successfully deleted all machines. "
+        modifyEnv $ over packetMachines (const Map.empty)
+        display "Successfully deleted all machines. "
 
 
 
@@ -389,45 +451,71 @@ parseDefs = lexeme $ try $ do
             d <- askForDisplayChan
             writeChan d $ err
         Right sorted ->  do
+
             let mchDefs = foldr (\x acc-> case x of
-                    Command y -> acc 
                     MachineDef y -> y : acc
-                    SourceDef y  -> acc ) [] sorted
+                    _            -> acc ) [] sorted
+
             let srcDefs = foldr (\x acc-> case x of
-                    Command y -> acc 
-                    MachineDef y -> acc
-                    SourceDef y  -> y : acc ) [] sorted
+                    SourceDef y  -> y : acc
+                    _            -> acc ) [] sorted
+
+            let facDefs = foldr (\x acc -> case x of
+                    FactoryDef y -> y : acc
+                    _            -> acc) [] sorted 
             return $ do
                 d <- askForDisplayChan 
                 mapM_ (\x -> writeChan d $ (x <> "\n"))    mchDefs 
-                mapM_ machineBuilder mchDefs 
-                mapM_ sourceBuilder srcDefs
+                mapM_ (machineBuilder Named) mchDefs 
+                mapM_ (sourceBuilder Named) srcDefs
+                mapM_ factoryBuilder facDefs 
 
 sortInput :: Parser UserInput
-sortInput = sourceDef <|> machineDef <|> userCommand 
-   where 
-    sourceDef :: Parser UserInput
-    sourceDef = lexeme $ try $ do
-        sourceString
-        rest <- lexeme $ some anySingle
-        return $! SourceDef . T.pack $ rest
-       where
-           sourceString :: Parser ()
-           sourceString = lexeme $ try $ do
-               option () space
-               _ <- (lexeme . try $ string "source") <|> (lexeme $ string "s:")
-               return ()
+sortInput = lexeme $ do 
+  firstWord <- lookAhead (lexeme $ some (digitChar <|> letterChar))
+  case firstWord of
 
-    machineDef :: Parser UserInput
-    machineDef = lexeme $ try $ do
-        void $ (lexeme . try $ string "machine:") <|> (lexeme $ string "m:")
-        rest <- lexeme $ some anySingle
-        return $! MachineDef . T.pack $ rest
+    "f:"       -> factoryDef
+    "factory:" -> factoryDef
 
-    userCommand :: Parser UserInput
-    userCommand = lexeme $ try $ do
-        rest <- lexeme $ some anySingle
-        return $! Command . T.pack $ rest 
+    "s:"       -> sourceDef
+    "source:"  -> sourceDef
+
+    "m:"       -> machineDef
+    "machine:" -> machineDef
+
+    _ -> userCommand  
+
+sourceDef :: Parser UserInput
+sourceDef = lexeme $ try $ do
+    sourceString
+    rest <- lexeme $ some anySingle
+    return $! SourceDef . T.pack $ rest
+    where
+        sourceString :: Parser ()
+        sourceString = lexeme $ try $ do
+            option () space
+            _ <- (lexeme . try $ string "s:") <|> (lexeme $ string "source:")
+            return ()
+
+machineDef :: Parser UserInput
+machineDef = lexeme $ try $ do
+    void $ (lexeme . try $ string "m:") <|> (lexeme $ string "machine:")
+    rest <- lexeme $ some anySingle
+    return $! MachineDef . T.pack $ rest
+
+factoryDef :: Parser UserInput
+factoryDef = lexeme $ try $ do
+  option () space 
+  void $ ((lexeme . try $ string "f:") <|> (lexeme . try $ string "factory:"))
+  option () space 
+  rest <- lexeme $ some anySingle
+  return $! FactoryDef . T.pack $ rest 
+
+userCommand :: Parser UserInput
+userCommand = lexeme $ try $ do
+    rest <- lexeme $ some anySingle
+    return $! Command . T.pack $ rest 
 
 data NamedSource = NamedSource T.Text PacketSource
 
@@ -447,91 +535,81 @@ splitEq = lexeme $ try $ do
     rest <- lexeme $ some anySingle
     return $! (T.pack first, T.pack rest)
 
-sourceBuilder :: T.Text -> MyReader ()
-sourceBuilder txt 
-    = case parseLex splitEq txt of
-        Left _ -> do
-            d <- askForDisplayChan
-            writeChan d $ "Error. Looks liked you tried to define a "
-                        <> "source, but forgot the '='"
-        Right (nm,srcTxt) -> do
-            sIDs <- askForSourceIDs
-            unless (isJust $ Map.lookup nm sIDs) $ do 
-                case parseLex sources srcTxt of
-                    Left err -> do
-                        d <- askForDisplayChan
-                        writeChan d err
-                    Right mySrc -> do
-                        mySrc' <- mySrc 
-                        case mySrc' of
-                            Right mySrc' -> do 
-                                e <- ask
-                                let mySData = SourceData mySrc' txt
-                                liftIO . atomically . modifyTVar' e $
-                                    \x -> over sourceIDs (\m -> Map.insert nm mySData m) x
-                                d <- askForDisplayChan
-                                writeChan d $ "Success! Source " <> nm <> " has been successfully compiled."
-                            Left err -> do
-                                d <- askForDisplayChan
-                                writeChan d err  
-            when (isJust $ Map.lookup nm sIDs) $ do
-                d <- askForDisplayChan
-                writeChan d $ "Error! A source named " <> nm <> " already exists!" 
-            
-machineBuilder :: T.Text -> MyReader ()
-machineBuilder inputString =
-    case parseLex factory inputString of
-        Left err -> do
-            d <- askForDisplayChan
-            liftIO $ atomically $ writeTChan d $ 
-                "Error: Invalid expression in input string: \n\"" 
-                <> inputString
-                <> "\"\n Parser error information: \n" 
-                <> err
-        Right (NamedMachine nm mArr) -> do
-            e <- askForEnvironment
-            d <- askForDisplayChan
-            liftIO . atomically . writeTChan d $ "Processing machine: " <> T.pack (show mArr)
-            st <- liftIO $ execStateT (makeMachines mArr) (MyParserState (Right echo) [] e) 
-            case st ^. machineAcc of
-                Left errs -> do
-                    d <- askForDisplayChan
-                    liftIO $ atomically $ writeTChan d $
-                        "Error: Unable to parse expression as a valid PacketMachine. "
-                        <> "\nError info: \n" <> errs
-                Right aMachine ->  do 
-                            let fs = st ^. funcsOnSuccess
-                            e' <- ask 
-                            tag <- askForTagCount 
-                            alreadyExists <- getMachineByName nm
-                            case alreadyExists of 
-                                Left _ -> do
+data BuilderMode = Named | Anonymous deriving (Show, Eq)
 
-                                    newCommQ <- liftIO $ newTBQueueIO 1000
+sourceBuilder :: BuilderMode -> T.Text -> MyReader (Maybe SourceData) 
+sourceBuilder bMode inputString =
+    case bMode of
+      Named -> except (parseLex splitEq inputString) >>= \case 
+          Just (nm,srcTxt) -> go nm srcTxt inputString 
+          Nothing -> return Nothing   
 
-                                    newCnt   <- liftIO $ newTVarIO 0
-
-                                    let mchDat = MachineData 
-                                                    aMachine
-                                                    nm
-                                                    newCommQ
-                                                    False
-                                                    newCnt
-                                                    inputString
-                                                    Nothing
-                                                    [] 
-
-                                    liftIO . atomically . modifyTVar' e' $ 
-                                        over packetMachines $ Map.insert tag mchDat 
-
-                                    liftIO $ atomically $ 
-                                        modifyTVar' e' (updateEnv fs)
-
-                                    liftIO . atomically . writeTChan d $ "Success! Machine " <> mchName nm <> " has been successfully compiled." 
-
-                                Right _ ->  do
-                                    liftIO . atomically . writeTChan d $ 
-                                        "Error: Machine with name " <> mchName nm <> "already exists!"
+      Anonymous -> mkRandomSrcName >>= \sName -> 
+        pure (sName <> " = " <> inputString) >>= \newString -> 
+           go sName inputString newString
    where
-       updateEnv :: [Environment -> Environment] -> Environment -> Environment
-       updateEnv fs en = foldl' (\x f-> f x) en fs 
+     go :: T.Text -> T.Text -> T.Text -> MyReader (Maybe SourceData)
+     go srcName srcDefTxt rawString = do
+       sData <- askForSourceData
+       let alreadyExists = isJust $ Map.lookup srcName sData
+       if alreadyExists
+         then (display $ "Error! A source named " <> srcName <> " already exists!") >> return Nothing
+         else 
+           except (parseLex sources srcDefTxt) >>= \case
+              Nothing -> return Nothing 
+              Just anAction -> anAction >>= \x -> 
+                except x >>= \case
+                  Nothing -> return Nothing
+                  Just z  -> 
+                    let mySrcData =  (SourceData z rawString) 
+                    in (modifyEnv $ over sourceData (Map.insert srcName mySrcData)) 
+                        >> display  ("Successfully compiled source " <> srcName )
+                        >> return (Just mySrcData)
+
+
+
+
+machineBuilder :: BuilderMode -> T.Text  -> MyReader (Maybe MachineData)
+machineBuilder bMode inputString =
+    if bMode == Named 
+      then do 
+        case parseLex namedMachine inputString of
+            Left err -> display err >> return Nothing 
+            Right nmed -> go nmed inputString
+
+      else do 
+          newName <- mkRandomMchName 
+          let newInString = newName <> " = " <> inputString 
+          case parseLex namedMachine newInString  of
+              Left err -> display err >> return Nothing
+              Right nmed -> go nmed newInString 
+   where
+
+        go (NamedMachine nm arr ) inString = do
+              display $ "Processing machine " <> mchName nm
+              e <- askForEnvironment
+              st <- liftIO $ execStateT (makeMachines arr) (MyParserState (Right echo) [] e)
+              let macc = return (st ^. machineAcc) >>= except
+              mach <- macc   
+              let fs = st ^. funcsOnSuccess
+              alreadyExists <- isRight <$> (getMachineDataByName nm)
+              if alreadyExists
+                then (display $ "Error! A machine with name " <> mchName nm <> "already exists!") >> return Nothing 
+                else case mach of
+                  Nothing -> do 
+                        display $ "Failed to compile machine " <> mchName nm
+                        return Nothing 
+                  Just myMachine -> do
+                        let myMachineData = MachineData myMachine inString
+                        e <- ask 
+                        liftIO . atomically . modifyTVar' e $ over packetMachines (Map.insert nm myMachineData)
+                        liftIO . atomically . modifyTVar' e $ updateEnv fs
+                        display $ "Success! Machine " <> mchName nm <> " has been compiled"
+                        return (Just myMachineData) 
+
+        updateEnv :: [Environment -> Environment] -> Environment -> Environment
+        updateEnv fs en = foldl' (\x f-> f x) en fs 
+
+
+
+

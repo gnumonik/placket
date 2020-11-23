@@ -16,7 +16,7 @@ import PacketIO
 import Data.Proxy 
 import Data.Char
 import PacketSources
-import MyReaderT (getSourceByName)
+import MyReaderT 
 import RecordTypes (ProtocolBuilder)
 import qualified Data.Map.Strict as Map
 import Control.Monad.Reader.Class

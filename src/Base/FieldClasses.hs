@@ -543,7 +543,7 @@ data PrimToken
 class Default a => StringyLens a where
     update  ::  Proxy a 
             -> [T.Text] 
-            -> (forall b. Primitive b => Proxy b -> Either T.Text [(b -> b)] ) 
+            -> (forall b. Primitive b => Proxy b -> Either T.Text [b -> b] ) 
             -> Either T.Text (a -> [a])
     applyTo :: Monoid c 
             => Proxy a 
@@ -560,40 +560,6 @@ class (Default b, StringyLens a, StringyLens b)
         insertField   :: a -> [b] -> a
         deleteFieldIf :: (b -> Bool) -> a -> a
         modifyFieldIf :: a -> (b -> Bool) -> (b -> [b]) -> a 
-
-
-
-
-
-{--
-
-toSET :: forall b. Primitive b => T.Text -> Proxy b ->  (b -> b)
-toSET str _ = case parseIt str :: Maybe (ValRangeSet b) of
-    Just (Val v) ->  const v
-    _            -> error "error!"
-   -- Just (Range x y) -> case maybeFromTo @b of
-  --      Just f ->  map ( const) $ f x y
-  --      Nothing -> []
-  --  Just (Set xs) -> map (const) xs
-  --  _             -> []
-
-toCOMP :: forall b. (Primitive b) => T.Text -> Proxy b -> (b -> Bool)
-toCOMP str _ = case parseIt str :: Maybe (ValRangeSet b) of
-    Just (Val v) -> \x -> x == v
-    Just (Range x y) -> case maybeFromTo @b of
-            Just _  -> \a ->  (a >= x) && (a <= y)
-            Nothing -> const False
-    Just (Set xs) -> \x -> foldr (\a b -> x == a || b) False xs
-    _ -> const False
---}
-
-
-
-
-            
-
-
-
 
 data ETH = ETH deriving (Show, Eq, Typeable)
 instance Alias EthernetFrame ETH

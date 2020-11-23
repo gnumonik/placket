@@ -34,7 +34,9 @@ initializeApp = do
 
     let pktMachines  = Map.empty
 
-    let sIDs   = Map.empty
+    let pktSources   = Map.empty
+
+    let pktFactories = Map.empty 
 
     pcLock <- newTMVarIO ()
 
@@ -67,8 +69,9 @@ initializeApp = do
 
     let initEnv = Environment  
                   tCount
+                  pktFactories 
                   pktMachines 
-                  sIDs
+                  pktSources 
                   pcLock
                   pcapHandle
                   serverQ
@@ -169,7 +172,7 @@ printer :: DisplayChan -> (String -> IO ()) -> IO ()
 printer chan f = forever $ do
     toPrint <- atomically $ readTChan chan 
     f $ "\n" <> T.unpack toPrint <> "\n" 
-    threadDelay 3500
+    threadDelay 2000
 
 
 

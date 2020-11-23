@@ -17,10 +17,11 @@ import Data.Maybe
 import Control.Lens.TH 
 import Control.Lens 
 import Data.Word ()
-import Data.Time.Clock
+import Data.Time.Clock.System
 import qualified Data.Text as T 
-import FieldClasses
+import PrettyPrint 
 import IP4 
+import Data.Time.Clock
 import Control.Monad.IO.Class
 import Control.Concurrent (threadDelay)
 
@@ -43,15 +44,15 @@ arpServer msgQ dChan = forever $ do
        updateARPCache :: forall t. TVar ARPCache -> Maybe ARPMessage -> IO ()
        updateARPCache cacheVar maybeMsg  = do
             when (isJust maybeMsg) $ do
-                currentTime <- getCurrentTime
+                currentTime <- getSystemTime 
                 atomically . modifyTVar' cacheVar $! \x ->  
                     goIP currentTime (fromJust maybeMsg) x
 
            where
-                goIP :: UTCTime
+                goIP :: SystemTime
                      -> ARPMessage 
-                     -> Map IP4Address (MacAddr,UTCTime) 
-                     -> Map IP4Address (MacAddr, UTCTime)
+                     -> Map IP4Address (MacAddr,SystemTime) 
+                     -> Map IP4Address (MacAddr, SystemTime)
                 goIP !theTime !msg !myMap 
                     = let targetAddrs   =  (msg ^. aTpa, msg ^. aTha)
                           newMap        = 
@@ -60,14 +61,15 @@ arpServer msgQ dChan = forever $ do
                                   else myMap  
                       in newMap
                 
-                checkAndUpdate :: UTCTime
+                checkAndUpdate :: SystemTime
                                -> (IP4Address,MacAddr) 
-                               -> Map IP4Address (MacAddr, UTCTime) 
-                               -> (Map IP4Address (MacAddr, UTCTime)) 
+                               -> Map IP4Address (MacAddr, SystemTime) 
+                               -> (Map IP4Address (MacAddr, SystemTime)) 
                 checkAndUpdate !time !(ip,mac) !myMap = 
                     case Map.lookup ip myMap of
                         Just (_,t) -> do
-                            let diffTime = (\x -> fromRational x :: Double) . toRational $  diffUTCTime time t
+                            let diffTime = (\x -> fromRational x :: Double) . toRational $  
+                                 diffUTCTime (systemToUTCTime time) (systemToUTCTime t)
                             if | (diffTime > 120) && (unIP4 ip/= 0) -> 
                                      Map.insert ip (mac,time) myMap 
                                | otherwise ->  myMap 
@@ -75,17 +77,14 @@ arpServer msgQ dChan = forever $ do
 
 
 
-prettyIPTable :: Map IP4Address (MacAddr,UTCTime) -> T.Text 
-prettyIPTable myMap = "ARP Table (IP Keyed):\n"
+prettyIPTable :: Map IP4Address (MacAddr,SystemTime) -> T.Text 
+prettyIPTable myMap = makeLabelRow "ARP Table (IP Keyed):"
                     <> (T.concat . map go $ Map.toList myMap)
     where
-        go :: (IP4Address, (MacAddr,UTCTime)) -> T.Text 
-        go (ip ,(mac,time)) = "IP: " 
-                            <> prettifyIP (unIP4 ip) 
-                            <> " | " 
-                            <> "MAC: " <> prettyMac mac 
-                            <> " | Time seen: "
-                            <> (T.pack $ show time)
-                            <> "\n"
+        go :: (IP4Address, (MacAddr,SystemTime)) -> T.Text 
+        go (ip ,(mac,time)) = makeDataRowLJ $ 
+                            ["IP: " <> prettifyIP (unIP4 ip)  
+                            ,"MAC: " <> prettyMac mac 
+                            ,"Time seen: " <> (T.pack . show $  time)]
 
 

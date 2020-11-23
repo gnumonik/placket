@@ -34,46 +34,59 @@ limit n mch = execStateM n (go mch) ~> flattened
         when (s <= 0) $ return () 
 
 
+data SwitchMode = Reset | Blow  deriving Eq
+
 data SwitchState = Off | On deriving (Show, Eq)
 
 ------
 -- Switch. A higher order machine. Takes a predicate and two machines. Runs the first machine on its input until the predicate holds, then permanently switches to the second machine.
 ------
-switch :: Predicate -> PacketMachine -> PacketMachine -> PacketMachine
-switch f m1 m2 = (execStateM Off $ makeSwitch f m1 m2) ~> flattened 
+switch :: SwitchMode -> Predicate -> PacketMachine -> PacketMachine -> PacketMachine
+switch mode f m1 m2 = (execStateM (mode,Off) $ makeSwitch f m1 m2) ~> flattened 
     where
         makeSwitch :: (V.Vector ProtocolMessage -> Bool)
                    -> PacketMachine
                    -> PacketMachine
-                   -> MachineT (StateT SwitchState IO) (Is Message) [Message]
+                   -> MachineT (StateT (SwitchMode,SwitchState) IO) (Is Message) [Message]
         makeSwitch f' m1' m2' = repeatedly $ do
             (hdr,nextMsg) <- await
-            s <- lift get 
+            (mode,s) <- lift get 
             case s of
                 Off -> do
                     if f' nextMsg
                         then do
-                            lift $ modify $ \x -> On
+                            lift $ modify $ \(x,_) -> (x,On)
                             newMsg <- liftIO $ runT $ supply [(hdr,nextMsg)] m2'
                             yield newMsg
                         else do
                             newMsg <- liftIO $ runT $ supply [(hdr,nextMsg)] m1'
                             yield newMsg
                 On -> do
-                    newMsg <- liftIO $ runT m2'
-                    yield newMsg 
+                  (mode,s) <- lift get
+                  when (mode == Reset) $ do
+                      if f' nextMsg
+                        then do
+                            lift $ modify $ \(x,_) -> (x,Off)
+                            newMsg <- liftIO $ runT $ supply [(hdr,nextMsg)] m2'
+                            yield newMsg
+                        else do
+                            newMsg <- liftIO $ runT $ supply [(hdr,nextMsg)] m1'
+                            yield newMsg
+                  unless (mode == Reset) $ do 
+                  newMsg <- liftIO $ runT m2'
+                  yield newMsg 
 
 ------
 -- Until. A higher order machine. Takes a predicate and a packetmachine, and runs that machine until it receives a packet for which the predicate holds, then stops yielding.
 ------
 until :: Predicate -> PacketMachine -> PacketMachine
-until f m1 = switch f m1 blackHole
+until f m1 = switch Blow f m1 blackHole
 
 ------
 -- After. A higher order machine. Takes a predicate and a packetMachine, discards all packets until it receives on that machines the predicate, then runs the machine. 
 ------
 after :: Predicate -> PacketMachine -> PacketMachine
-after f m1 = switch f blackHole m1 
+after f m1 = switch Blow f blackHole m1 
 
 ------
 -- When. A higher order machine. Takes a predicate and a machine, and runs the machine on incoming packets if they satisfy the predicate, while passing them through to the next machine if they do not. 

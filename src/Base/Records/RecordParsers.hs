@@ -28,7 +28,7 @@ betweenPs :: Parser a -> Parser a
 betweenPs p = between (lexeme $ char '(') (lexeme $ char ')') p
 
 predicate :: Parser a -> Parser (Predicate' a)
-predicate p =  (parseOR p) <|> (parseAND p) <|> parseNOT p <|> (parseATOM p) 
+predicate p =  ((parseOR p) <|> (parseAND p) <|> parseNOT p <|> (parseATOM p) ) <?> "Syntax error in truth functional expression. Perhaps you forgot parentheses to indicate precedence?"
     where
         parseATOM prsr = lexeme $ try $ do
             parsed <- prsr
@@ -115,7 +115,7 @@ fieldBuilderExp = lexeme $ try $ do
 fieldBuilder :: Parser FieldBuilder
 fieldBuilder = lexeme $ try $ do
     oStrs <- opticStrings
-    void $ lexeme $ char '='
+    (void $ lexeme $ char '=') <?> "Error: Missing '=' after accessor string"
     fld   <- field
     return $! FieldBuilder oStrs fld
 
@@ -212,10 +212,10 @@ fieldSelector =  lexeme $ try $ do
 
 varExpr :: Parser CompareTo
 varExpr = lexeme $ try $ do
-        void $ lexeme $ string "$("
+        (void $ lexeme $ string "$(") <?> "Error: Expected a variable expression beginning with '$(', but did not receive the '$('"
         oStr <- opticStrings
        -- myOp <- (just operation) <|> nothing
-        void $ lexeme $ string ")"
+        (void $ lexeme $ string ")") <?> "Error: Missing ')' in variable expression."
         return $! RefVarExpr oStr Nothing --myOp
 
 literal :: Parser CompareTo
@@ -228,7 +228,7 @@ compareToWC = lexeme $ try $ do
     return $! CompareToWC 
 
 comp :: Parser Comp
-comp = eq' <|> noteq' <|> lt' <|> lte' <|> gt' <|> gte'
+comp = (eq' <|> noteq' <|> lt' <|> lte' <|> gt' <|> gte') <?> "Error: Invalid comparison operator. Valid comparison operators are =,/=,!=,>,>=,<,<="
     where
         eq' :: Parser Comp
         eq' = lexeme $ try $ do

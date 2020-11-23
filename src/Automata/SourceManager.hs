@@ -12,15 +12,53 @@ import Data.Machine
 import Data.Machine.Lift 
 import qualified Data.Text as T 
 import Control.Monad.IO.Class 
+import Data.Word 
 import Control.Monad
 import Data.Maybe
 import FactoryTypes
+import PacketSources 
 import MyReaderT
 import UtilityMachines (writeChan)
 
 pump :: SourceT IO ()
 pump = repeatedly $ do
     yield ()
+
+
+sinkManager :: TBQueue ToSink 
+            -> TVar Int
+            -> PacketMachine
+sinkManager toSinkQueue outCount = execStateM Disconnected $ go toSinkQueue outCount
+    where
+        go :: TBQueue ToSink -> TVar Int -> MachineT (StateT SinkState IO) (Is Message) Message
+        go sinkQ oCount = repeatedly $ do
+
+            maybeCommand <- liftIO . atomically . tryReadTBQueue $ sinkQ
+
+            lift $ runCommand maybeCommand 
+
+            nextMsg <- await 
+
+            liftIO . atomically . modifyTVar' oCount $ (+1)
+
+            s <- lift get
+
+            case s of 
+
+                ConnectedTo someQ -> do
+                    liftIO . atomically . writeTBQueue someQ $ nextMsg 
+
+                Disconnected -> return () 
+
+        runCommand :: (Maybe ToSink) -> StateT SinkState IO () 
+        runCommand Nothing = return () 
+        runCommand (Just cmd) = case cmd of
+
+            ConnectTo newQ -> do
+                modify $ \x -> ConnectedTo newQ
+
+            Disconnect -> do
+                modify $ \x -> Disconnected 
 
 
 sourceManager :: DisplayChan 
@@ -57,50 +95,66 @@ sourceManager dChan toServer toSrc msgQueue = repeatedly $ do
 
                     (SrcState myTag myState cnt) <- get
 
-                    liftIO $ atomically $ writeTBQueue toServer' (NOMOREPACKETS myTag)
+                    writeQ toServer' (NOMOREPACKETS . fromIntegral $ myTag)
 
                     modify $ \(SrcState t _ cnt) -> SrcState t SRC_INACTIVE cnt
 
-mkFactory :: MachineData -> PacketSrc -> MyReader (Maybe PacketMachine)
-mkFactory mData pSrc = do
 
-    serverQ  <- askForServerQueue
 
-    MachineData mch nm commQ activ pCnt sch thrd msgQ <- pure mData 
-
-    mIDs <- askForMachineIDs 
-
-    let tagOfNm = foldr (\(a,b) acc -> if b == nm then Right a else acc ) (Left $ "Error! Machine has no ID!") mIDs
-
+mkFactoryV2 :: Maybe T.Text -> MachineData -> SourceData -> MyReader (Word16,Factory)
+mkFactoryV2 fName mData sData = do
     dChan <- askForDisplayChan
 
-    if not activ 
+    MachineData mch mSch <- pure mData
+    SourceData  src sSch <- pure sData
 
-        then do
+    serverQ <- askForServerQueue
 
-            case tagOfNm  of
+    CappedSrc cappedSrc msgQueues <- capSource src
 
-                Left err -> do
-                    chan <- askForDisplayChan
-                    liftIO $ atomically $ writeTChan chan err
-                    return Nothing 
+    facID <- mkRandomFacID
 
-                Right t -> do 
-                    
-                    (Plugged src qs) <- pure pSrc 
+    let myFName = case fName of
+          Nothing -> T.pack . show $ facID
+          Just aName -> aName
 
-                    let mySrcManager = plug $ src ~> 
-                            (execStateM (SrcState t SRC_ACTIVE pCnt) $ 
-                            sourceManager dChan serverQ commQ qs) 
+    srcQueue <- liftIO $ newTBQueueIO 1000
 
-                    return $ Just $ mySrcManager ~> mch
+    snkQueue <- liftIO $ newTBQueueIO 1000 
 
-                
-        else do
-                writeChan dChan $
-                    "\nError: Them machine named " 
-                    <> (mchName nm)
-                    <> "is already running."
-                return Nothing    
+    inCount  <- liftIO $ newTVarIO 0
+
+    outCount <- liftIO $ newTVarIO 0 
+
+    let startTime = Nothing
+
+    let fThread = Nothing
+
+    let mySrcManager = plug $ cappedSrc ~> (execStateM (SrcState facID SRC_ACTIVE inCount) $ 
+                                 sourceManager dChan serverQ srcQueue msgQueues)
+
+    let mySinkManager = sinkManager snkQueue outCount 
+
+    
+
+    let theMachine = mySrcManager ~> mch ~> mySinkManager 
+
+    let myFactory = Factory 
+                        theMachine
+                        myFName 
+                        sData 
+                        mData 
+                        fThread 
+                        srcQueue
+                        snkQueue 
+                        False 
+                        inCount 
+                        outCount 
+                        startTime
+                        msgQueues
+
+    return (facID,myFactory) 
+
+
 
 

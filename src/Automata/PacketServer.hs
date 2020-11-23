@@ -24,6 +24,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async)
 import Staging
 import qualified Data.Text as T
+import Data.Word
 import UtilityMachines (writeChan)
 
 
@@ -47,7 +48,7 @@ packetServer dChan hdl lock commandQueue = forever $ do
              
          liftIO $ threadDelay 500
    where 
-    dispatchPacket :: Message  -> Map Int ([TBQueue Message]) -> IO () 
+    dispatchPacket :: Message  -> Map Int [TBQueue Message] -> IO () 
     dispatchPacket !msg !s 
         = let queues = concatMap snd . Map.toList $ s
           in mapM_ (\x -> liftIO . atomically . writeTBQueue x $ msg ) queues  
@@ -56,15 +57,17 @@ packetServer dChan hdl lock commandQueue = forever $ do
     runServerCommand ::  ToServer -> StateT (Map Int [TBQueue Message]) IO ()
     runServerCommand  com  = do 
         case com of
-            GIMMEPACKETS tag queue -> do
-                s <- get 
+            GIMMEPACKETS tag' queue -> do
+                s <- get
+                let tag = fromIntegral tag' 
                 case Map.lookup tag s of
                     Just _ -> return ()
                     Nothing -> do
                         modify $ Map.insert tag queue
 
-            NOMOREPACKETS tag -> do
+            NOMOREPACKETS tag' -> do
                 s <- get
+                let tag = fromIntegral tag'
                 case Map.lookup tag s of
                     Just qs -> do 
                         modify $ Map.delete tag

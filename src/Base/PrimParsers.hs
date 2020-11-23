@@ -51,7 +51,7 @@ filePath = lexeme $ try $ do
 
 int :: Parser Int
 int = lexeme $ try $ do
-    n' <- some $ satisfy isDigit 
+    n' <- (some $ satisfy isDigit ) <?> "Error: Expected an integer, but received a non-digit character."
     let n = read n' :: Int
     return n 
 
@@ -81,6 +81,7 @@ bin0b = lexeme $ try $ do
     return b' 
 
 
+
 parse' :: Parser a -> T.Text -> Either (ParseErrorBundle T.Text T.Text) a
 parse' p = parse p ""
 
@@ -95,7 +96,7 @@ parseLex p txt = case parse' (lexeme $ p) txt of
 lexeme :: Parser a -> Parser a
 lexeme p = do
     x <- p
-    skipMany $ satisfy (== ' ')
+    space
     return x
 
 range :: Parser (T.Text,T.Text)
@@ -216,12 +217,11 @@ word32 = word32B <|> word32H <|> word32D
    where 
 
     word32D = lexeme $ try $ do
-        myInt <- some digitChar
-        let n = read myInt :: Int
+        n <- int 
         if n < (fromIntegral $ (minBound :: Word32)) || n > (fromIntegral $ (maxBound :: Word32))
             then fail $
                 "Error: Value "
-                ++ myInt
+                ++ (show n)
                 ++ " exceeds the bounds of a Word32 : ("
                 ++ show  (minBound :: Word32)
                 ++ "-"
@@ -306,11 +306,8 @@ byteString = hexBS <|> asciiBS
 
     asciiBS :: Parser ByteString
     asciiBS = lexeme $ try $ do
-        void $ lexeme $ char '\"'
-        aString <- some (satisfy $ (/= '\"')) 
-        void $ lexeme $ char '\"'
-        return $  BSU.fromString aString
-
+        aString <- quotedString 
+        return $  BSU.fromString (T.unpack aString)
 flag :: Parser Flag
 flag = flagBool <|> flagNum 
    where 
@@ -343,8 +340,8 @@ dnsName = lexeme $ try $ do
   where
       dnspointer = lexeme $ try $ do
           void $ lexeme $ string $ "POINTER:"
-          n <- some digitChar
-          return $ (DNSPointer (read n :: Word16), DNSLabel BS.empty)
+          n <- word16
+          return $ (DNSPointer n, DNSLabel BS.empty)
 
       dnsnamelabel = lexeme $ try $ do
           rawStr <- manyTill (satisfy (\x -> x `notElem` ['.','@','\"'])) (lookAhead (voidCh (char '.') <|> voidCh (char '@')))
@@ -383,7 +380,7 @@ emptyString = lexeme $ try $ do
 
 quotedString :: Parser T.Text
 quotedString = lexeme $ try $ do
-    void $ char '"'
+    (void $ char '"') <?> "Error: Expecting a string enclosed by quotes, but there is no initial quotation mark."
     body <- manyTill (satisfy $ \x -> x /= '"') (lookAhead $ char '"')
-    void $ char '"'
+    (void $ char '"') <?> "Error: Expecting a string enclosed by quotes, but there is no ending quotation mark."
     return $! T.pack body 

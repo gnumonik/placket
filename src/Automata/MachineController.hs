@@ -45,14 +45,13 @@ machineController uChan =  do
             Right userInput ->
                 case userInput of
                     Command str -> do
-                        e <- ask
-                        liftIO $ runReaderT (runCommand str) e 
+                        void $ runCommand str
                     MachineDef str -> do
-                        e <- ask
-                        liftIO $ runReaderT (machineBuilder str) e
+                        void $ machineBuilder Named str
                     SourceDef str -> do
-                        e <- ask
-                        liftIO $ runReaderT (sourceBuilder str) e 
+                        void $ sourceBuilder Named str
+                    FactoryDef str -> do
+                        void $ factoryBuilder str  
         liftIO $ threadDelay 1000
         machineController uChan
     unless continue $ do

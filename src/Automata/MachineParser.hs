@@ -54,7 +54,17 @@ import RecordFuncs (evalProtoSelectExp, evalMsgSelectorExp, formatList)
 import PacketOperations (randomP, randomPs)
 import UtilityMachines 
 import BuilderMachines
-import EffectfulMachines 
+import EffectfulMachines
+    ( alert,
+      counter,
+      debug,
+      doIO,
+      dumpPkt,
+      listener,
+      prettyPrint,
+      report,
+      send,
+      stash ) 
 import HigherOrderMachines
 import SelectorMachines 
 import Control.Lens (view, set, (^.), over)
@@ -82,10 +92,10 @@ type ParseOutput = Either T.Text (PacketMachine, Maybe (Environment -> Environme
 makeMachines :: MachineArrow T.Text -> ParserMonad
 makeMachines mArr = case mArr of
     (x :~> ys) -> do
-        mX <- makeMachine x
+        mX <- (makeMachine x)
         case mX of
             Left err -> do
-                modify $ over machineAcc $ \x -> Left err
+                modify $ over machineAcc $ \y -> Left err
                 return $! Left err
             Right _ -> makeMachines ys
     (x :~+> ys) -> do
@@ -118,7 +128,7 @@ makeMachines mArr = case mArr of
         mX <- makeMachine x
         case mX of 
             Left err -> do
-                modify $ over machineAcc $ \x -> Left err
+                modify $ over machineAcc $ \y -> Left ("Parse error in: " <> x <> "\n" <> err)
                 return $! Left err
             _ -> do
                 s <- get
@@ -164,9 +174,9 @@ makeRandom = lexeme $ try $ do
 
 getMachineByNameSTATE :: MachineName -> Environment -> Either T.Text PacketMachine
 getMachineByNameSTATE nm en 
-   =  foldr (\(_,b) y -> 
-       if b ^. machineNm == nm 
-           then Right (b ^. packetMch) 
+   =  foldr (\(b,MachineData pktMch _) y -> 
+       if b  == nm 
+           then Right pktMch
            else y) 
            (Left $ "\nError: No machine named " <> (mchName nm) <> " exists.\n") 
            $ Map.toList (en ^. packetMachines)
@@ -193,10 +203,10 @@ prettyPrintR = lexeme $ try $ do
 printFieldR :: Parser (StateT MyParserState IO ParseOutput)
 printFieldR = lexeme $ try $ do
     void . lexeme $ string "printField"
-    void . lexeme $ string "label="
+    (void . lexeme $ string "label=" ) <?>  "Error: Expecting a label in printField. The syntax for printField is: printField label=\"LABEL\" printMode=PRINTMODE  PROTOCOLTYPE FIELDACCESSOR \nE.g. printField label=\"IP4Src\"  printMode=default IP4 src"
     l <- quotedString
-    void . lexeme $ string "mode=" 
-    m <- ppMode
+    void . lexeme $ string "printMode=" 
+    m <- ppMode <?> "Error: Invalid print mode. Valid print modes are hex, bin, or default."
     ptype <- protocolType
     ostr  <- opticStrings
     return $ do
@@ -466,15 +476,15 @@ createR :: Parser (StateT MyParserState IO ParseOutput)
 createR = lexeme $ try $ do
     void $ lexeme $ string "create"
     void . lexeme $ string "wait="
-    dly <- lexeme $ some (satisfy isDigit)
+    dly <-   int
     void . lexeme $ string "repeat="
-    rpts <-  lexeme $ some (satisfy isDigit)
+    rpts <-  int
     bld <- builder protocolBuilder
     let ps = V.force <$> V.mapM PO.makeProtocolMessageV2 bld
     case ps of
             Left str -> return . return  $ Left str
             Right bldr -> do
-                let myMach = make bldr (Just . read $ rpts :: Maybe Int) (Just . read $ dly :: Maybe Int)
+                let myMach = make bldr (Just rpts) (Just dly)
                 return . return $ Right (myMach,Nothing)
 
 maybeInt:: Parser (Maybe Int)
@@ -492,12 +502,12 @@ maybeInt = option Nothing go
 counterR :: Parser (StateT MyParserState IO ParseOutput)
 counterR = lexeme $ try $ do
     void $ lexeme $ string "count"
-    toCount <- some (satisfy isDigit)
+    toCount <- int 
     return $! do
         theTime <- liftIO $ getCurrentTime
         s <- get
         let myChan = s ^. (env . displayChan)
-        return $! Right (execStateM (theTime,(read toCount :: Int)) $ counter myChan (read toCount :: Int ), Nothing) 
+        return $! Right (execStateM (theTime,toCount ) $ counter myChan toCount, Nothing) 
 ------
 -- Parser for the buffer machine. Buffer waits until it has collected n packets, then yields all of them sequentially upon reaching the specified number.
 ------
@@ -590,9 +600,18 @@ afterR = lexeme $ try $ do
                     Right p' -> return $ Right (after p' m, Nothing)
                     Left err -> return $ Left err 
 
+switchMode :: Parser SwitchMode
+switchMode = lexeme $ try $ do 
+  void . lexeme $ string "mode="
+  mode <- (lexeme . string $ "reset") <|> (lexeme . string $ "blow")
+  case mode of
+    "reset" -> return Reset
+    "blow"  -> return Blow 
+
 switchR :: Parser (StateT MyParserState IO ParseOutput)
 switchR = lexeme $ try $ do
     void $ lexeme $ string "switch"
+    mode   <- option Blow switchMode 
     p      <- msgPredicate
     mArg1  <- machineArrParens
     mArg2  <- machineArrParens
@@ -602,7 +621,7 @@ switchR = lexeme $ try $ do
         case sequence [m1,m2] of
             Right [m1',m2'] ->
                 case p of
-                    Right p' -> return $ Right (switch p' m1' m2', Nothing)
+                    Right p' -> return $ Right (switch mode p' m1' m2', Nothing)
                     Left err -> return $ Left err
             Left _ -> return $ Left . T.pack . show $ lefts [m1,m2]
 
@@ -762,7 +781,7 @@ sendIt = lexeme $ try $ do
 machineName :: Parser MachineName
 machineName = lexeme $ try $ do
     mname  <- (lexeme $ 
-        some (satisfy $ \x -> isLetter x || isDigit x)) <?> "Error parsing machine names. Machine names may only consists of upper/lowercase letters or digits."
+        some (satisfy $ \x -> isLetter x || isDigit x)) <?> "Error parsing machine name. Machine names may only consists of upper/lowercase letters or digits."
     return $ MachineName $ T.pack $ mname
 
 
@@ -814,12 +833,14 @@ machines = lexeme $ try $ do
 
 data NamedMachine = NamedMachine MachineName (MachineArrow T.Text) deriving (Show, Eq)
 
-factory :: Parser NamedMachine
-factory = lexeme $ try $ do
+namedMachine :: Parser NamedMachine
+namedMachine = lexeme $ try $ do
     name   <- lexeme $ some (satisfy $ \x -> isLetter  x || isDigit x)
     void $ lexeme $ string "="
     mach <- machineArrow
     return $! NamedMachine (MachineName . T.pack $ name) mach 
+
+
 
 machineArrParens :: Parser (MachineArrow T.Text)
 machineArrParens = lexeme $ try $ do
@@ -905,7 +926,7 @@ recParens = lexeme $ try $ do
        close = (lexeme . try $ char ')') <?> "Error: Expected a close paren ')' "
 
 writeMode :: Parser WriteMode
-writeMode = wr <|> apnd
+writeMode = (wr <|> apnd) <?> "Error: Invalid writeMode. Valid writeModes are write or append."
     where
         wr :: Parser WriteMode
         wr = lexeme $ try $ do

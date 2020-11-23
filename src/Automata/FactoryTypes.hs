@@ -40,6 +40,7 @@ import Wrappers (as, is)
 import qualified Data.ByteString as BS
 import Data.Word
 import Generics.SOP 
+import Data.Time.Clock.System
 import Data.Maybe
 import Serializer (serializeMessage)
 import RecordTypes
@@ -216,7 +217,7 @@ data ListenData = ListenData {_packet  :: Message -- The packet that was SENT
                              ,_onMatch    :: PacketMachine}
 makeLenses ''ListenData 
 
-data UserInput = Command T.Text | MachineDef T.Text | SourceDef T.Text 
+data UserInput = Command T.Text | MachineDef T.Text | SourceDef T.Text | FactoryDef T.Text deriving (Show, Eq)
 
 data SrcState' 
     = SRC_ACTIVE
@@ -226,24 +227,18 @@ type SrcID = Int
 
 type PacketCount = Int 
 
-data SrcState = SrcState SrcID SrcState' (TVar PacketCount)
+data SrcState = SrcState Word16 SrcState' (TVar PacketCount)
 
-data PacketSinkState
-    = SINK_INIT 
-    | SINK_ACTIVE 
-    | SINK_INACTIVE deriving (Show, Eq)
 
 data ToServer
     = GIMMEPACKETS Int [TBQueue Message]
-    | NOMOREPACKETS Int 
+    | NOMOREPACKETS Int
     | SHOWACTIVE deriving (Eq)
 
 data ToSrc
     = STOP 
 
-
-
-type ARPCache = Map IP4Address (MacAddr, UTCTime)
+type ARPCache = Map IP4Address (MacAddr, SystemTime)
 
 data ServerState = ServerState {_directory   :: Map Int (TBQueue Message)
                                ,_serverStats :: Map Int Int}
@@ -253,6 +248,7 @@ data PacketSrc = Generator (MachineT IO (Is ()) Message)
                | Why PacketSrc PacketSrc
                | Tea PacketSrc PacketSrc
                | Plugged (MachineT IO (Is ()) Message) [TBQueue Message]
+
 
 data CappedSrc = CappedSrc (MachineT IO (Is ()) Message) [TBQueue Message]
 
@@ -352,9 +348,10 @@ data MachineBuilder = MachineBuilder {_mbNm   :: T.Text
 
 
 
-data Environment = Environment  {_tagCount       :: !TagCount
-                                ,_packetMachines :: !(Map Int MachineData)
-                                ,_sourceIDs      :: !(Map T.Text SourceData)
+data Environment = Environment  {_fTagCount       :: !TagCount
+                                ,_factories      :: !(Map Word16 Factory)
+                                ,_packetMachines :: !(Map MachineName MachineData)
+                                ,_sourceData     :: !(Map T.Text SourceData)
                                 ,_pcapLock       :: !(TMVar ())
                                 ,_pcapHandle     :: !(PcapHandle)
                                 ,_serverQueue    :: !(TBQueue ToServer)
@@ -369,7 +366,7 @@ data Environment = Environment  {_tagCount       :: !TagCount
                                 ,_openDumpFiles  :: !(Map FilePath Handle)
                                 ,_openReadFiles  :: !(Map FilePath PcapHandle)
                                 ,_randSeed       :: !(PureMT)
-                                ,_cont           :: Bool}
+                                ,_cont           :: !Bool}
 
 type Env = TVar Environment
 
@@ -381,23 +378,39 @@ type PacketSource = SourceT IO  Message
 
 type PacketSink   = MachineT IO (Is Message) ()
 
-data SourceData = SourceData {_pktSrc :: PacketSrc , _srcSchema :: T.Text}
+data SinkState = Disconnected | ConnectedTo (TBQueue Message) | SINK_INACTIVE 
+
+data ToSink = ConnectTo (TBQueue Message) | Disconnect | SINK_STOP
+
+data SourceData = SourceData {_pktSrc :: !PacketSrc , _srcSchema :: !T.Text}
 
 newtype MachineName = MachineName {mchName :: T.Text} deriving (Show, Eq)
 
+instance Ord MachineName where
+    (MachineName x) <= (MachineName y) = x <= y
+
 data MachineData = MachineData {_packetMch   :: !PacketMachine 
-                               ,_machineNm   :: !MachineName
-                               ,_commQueue   :: !(TBQueue ToSrc)
-                               ,_isActive    :: !Bool
-                               ,_pktCountIn  :: !(TVar Int)
-                     --          ,_pktCountOut :: !(TVar Int)
                                ,_schema      :: !(T.Text)
-                               ,_thread      :: !(Maybe (Async ()))
-                               ,_msgQueue    :: ![TBQueue Message]} 
+                               } 
+
+data Factory  = Factory {_factory     :: !(MachineT IO (Is ()) Message)
+                        ,_facName     :: T.Text
+                        ,_srcData     :: !SourceData 
+                        ,_mchData     :: !MachineData 
+                        ,_fThread     :: !(Maybe (Async ()))
+                        ,_srcQ        :: !(TBQueue ToSrc)
+                        ,_snkQ        :: !(TBQueue ToSink) 
+                        ,_isActive    :: !Bool
+                        ,_pktCountIn  :: !(TVar Int)
+                        ,_pktCountOut :: !(TVar Int)
+                        ,_startTime   :: !(Maybe UTCTime)
+                        ,_fQueues     :: ![TBQueue Message]}
 
 makeLenses ''MachineData
 
 makeLenses ''SourceData  
+
+makeLenses ''Factory
 
 makeLenses ''Environment
 
