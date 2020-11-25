@@ -1,10 +1,43 @@
 # Pλacket
 
-Pλacket (or placket if you hate Greek letters) is a command-line utility, written in Haskell, for generating and processing streams of raw network packets.
+Pλacket (or placket if you hate Greek letters) is a command-line utility, written in Haskell and based on libpcap, that interprets a small reactive scripting language which generating and processing streams of raw network packets.
 
-Pλacket allows the user to define, combine, and run **packet machines**. A packet machine is a stream transducer that takes a network packet, which consists of a sequence of messages of different types, as input, and either modifies the packet, rejects the packet, or performs effectful actions such as printing the packet to the terminal or writing the packet to a file.
+Pλacket allows the user to define and combine a variety of *sources* (e.g. network devices, pcap files, or packet generating functions), connect those sources to *packet machines* that modify, filter, or perform effectful actions (such as sending, writing to a pcap, pretty printing packets or fields to the terminal or a file, etc). 
+
 
 In this documentation, it will sometimes be useful to refer to the *shape* of a packet. The shape of a packet is the set of protocols, represented in descending order from left to right. For example, a typical DNS packet might have the shape [DNS ; UDP ; IP4 ; ETH].
+
+# Installation 
+Pλacket *should* be compatible with any modern Linux distribution. Windows is not supported at this time. (It may be possible to build Pλacket on MacOS, but this has not been tested.)
+
+At the moment, the only way to install Pλacket is to compile it using the stack build tool. You can find instructions for installing stack [here](https://docs.haskellstack.org/en/stable/install_and_upgrade/#linux)
+
+Pλacket requires two external dependencies: libtinfo and libpcap-dev
+
+If you do not have these libraries present, they can be installed on Ubuntu with:
+
+`sudo apt install libtinfo` 
+`sudo apt install libpcap-dev` 
+
+(Replace `sudo apt install` with `sudo dnf install` for Fedora).
+
+If your distribution's repository does not contain libtinfo, you might try installing the ncurses-compat-libs package, which should satisfy the dependency. 
+
+After installing the dependencies, clone this repository with:
+
+`git clone https://github.com/gnumonik/placket.git`
+
+Change directories: 
+
+`cd ./placket`
+
+And build Pλacket with the command:
+
+`stack build`
+
+*Note*: Compiling Pλacket might take a while, especially if you don't have (the needed versions of) any of the Haskell dependencies required.
+*Note*: Stack will download the appropriate version of the GHC Haskell compiler. The Haskell compiler is quite large, but after compiling you may delete it without any negative consequences. 
+
 # Packet Machines 
 
 User defined machines are constructed by combining and configuring the built-in machines provided by Pλacket. 
@@ -17,7 +50,7 @@ There are three primitive operators for combining machines:
 
 This operator composes `<MACHINE1>` and `<MACHINE2>` to form a composite machine, which can be reused in the construction of other machines or run directly. When an expression of the form `<MACHINE1> ~> <MACHINE2> :|` is compiled, the resulting composite machine first applies `<MACHINE1>` and then feeds its input into `<MACHINE2>`.
 
-The `~>` operator can be used to chain machines together *ad infinitum*. Any expression of the form `<MACHINE1> ~> <MACHINE2> ~> (...) ~> <MACHINEX> :|` will compile to a single machine. Each chain of machines must end with the `:|` operator, which simply signifies to Pλacket that it can stop parsing the chain of machines. 
+The `~>` operator can be used to chain machines together *ad infinitum*. Any expression of the form `<MACHINE1> ~> <MACHINE2> ~> (...) ~> <MACHINEX>` will compile to a single machine. Each chain of machines must end with the `:|` operator, which simply signifies to Pλacket that it can stop parsing the chain of machines. 
 
 #### (**~+>**): `<MACHINE1> ~+> <MACHINE2> :| <MACHINE3> :| <MACHINE4> :| (etc)` 
 
@@ -33,11 +66,11 @@ These machines modify the shape of a packet. If a packet does not have a suitabl
 
 #### `pop <PROTOCOLTYPE>` 
 
-`pop` accepts a protocol type (e.g. `ETH`) as an argument, and extracts the named protocol and every protocol of a *higher* OSI layer from the packet. For example, if a packet has the shape [TCP ; IP4 ; ETH], `pop IP4` will return a packet with the shape [ TCP ; IP4 ]
+`pop` accepts a protocol type (e.g. `ETH`) as an argument, and extracts the named protocol and every protocol of a *higher* OSI/TCP layer from the packet. For example, if a packet has the shape [TCP ; IP4 ; ETH], `pop IP4` will return a packet with the shape [ TCP ; IP4 ]
 
 #### `pull <PROTOCOLTYPE>`
 
-`pull` accepts a protocol type (e.g. `ETH`) as an argument, and extracts the named protocol and every protocol on a *lower* layer from the packet. For example, if a packet has the shape [TCP ; IP4 ; ETH], `pull IP4` will return a packet with the shape [ IP4 ; ETH ]
+`pull` accepts a protocol type (e.g. `ETH`) as an argument, and extracts the named protocol and every protocol on a *lower* OSI/TCP layer from the packet. For example, if a packet has the shape [TCP ; IP4 ; ETH], `pull IP4` will return a packet with the shape [ IP4 ; ETH ]
 
 #### `extract <PROTOCOLTYPE>` 
 

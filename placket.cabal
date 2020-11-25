@@ -157,7 +157,7 @@ library
 
   default-language: Haskell2010
 
-executable placket-exe
+executable placket
   main-is: Main.hs
   other-modules:
       Paths_placket

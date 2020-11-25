@@ -89,7 +89,7 @@ copy n = go n ~> flattened
 
 
 ------
--- Pop. Takes the name of a protocol, and extracts the portion of a message from the "top" (i.e. TCP is 'higher' than IP which is 'higher' than Ethernet, etc) until it reaches the named protocol. 
+-- Pop. Takes the name of a protocol, and extracts the portion of a message from the "top" (on the TCP/IP or OSI model, i.e. TCP is 'higher' than IP which is 'higher' than Ethernet, etc) until it reaches the named protocol. 
 ------
 
 pop :: T.Text -> Either T.Text PacketMachine
@@ -97,7 +97,7 @@ pop str = pMach . liftF <$> withProtocol str (\x -> Right $ PO.pop x)
 
 
 ------
--- Pull. The inverse of pop. Takes the name of a protocol, and extracts the portion of a message from the "bottom" (i.e. Ethernet is lower than IP which is lower than TCP etc) until it reaches the named protocol. 
+-- Pull. The inverse of pop. Takes the name of a protocol, and extracts the portion of a message from the "bottom" (on the TCP/IP or OSI model, i.e. Ethernet is lower than IP which is lower than TCP etc) until it reaches the named protocol. 
 ------
 pull :: T.Text -> Either T.Text PacketMachine
 pull str = pMach .liftF <$> withProtocol str (\x -> Right $ PO.pull x)
