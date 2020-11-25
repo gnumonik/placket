@@ -6,7 +6,7 @@ module HigherOrderMachines where
 ------
 -- Limit. A higher order machine that modifies the behavior of other machines. Runs a machine N times, then stops yielding.
 ------
-import FactoryTypes (Predicate, Message, PacketMachine)
+import FactoryTypes 
 import Data.Machine
 import Control.Monad.Trans.State.Strict
 import qualified Data.Vector as V
@@ -34,7 +34,6 @@ limit n mch = execStateM n (go mch) ~> flattened
         when (s <= 0) $ return () 
 
 
-data SwitchMode = Reset | Blow  deriving Eq
 
 data SwitchState = Off | On deriving (Show, Eq)
 
@@ -73,8 +72,8 @@ switch mode f m1 m2 = (execStateM (mode,Off) $ makeSwitch f m1 m2) ~> flattened
                             newMsg <- liftIO $ runT $ supply [(hdr,nextMsg)] m1'
                             yield newMsg
                   unless (mode == Reset) $ do 
-                  newMsg <- liftIO $ runT m2'
-                  yield newMsg 
+                    newMsg <- liftIO $ runT m2'
+                    yield newMsg 
 
 ------
 -- Until. A higher order machine. Takes a predicate and a packetmachine, and runs that machine until it receives a packet for which the predicate holds, then stops yielding.
@@ -117,29 +116,41 @@ unless' f m1 = go ~> flattened
 ------
 -- counterSwitch. A higher order machine. Takes an int an two machines. Runs the first machine until n packets have been processed, then switches to the second machine permanently. 
 ------
-data CountDown = CountDown Int | OnCD
+data CountDown = CountDownL Int | CountDownR Int |  OnCD
 
-counterSwitch :: Int -> PacketMachine -> PacketMachine -> PacketMachine
-counterSwitch n m1 m2 = 
-    execStateM (CountDown 0) $ makeCountDownSwitch m1 m2 ~> flattened 
+counterSwitch :: SwitchMode -> Int -> PacketMachine -> PacketMachine -> PacketMachine
+counterSwitch mode n m1 m2 = 
+    execStateM (mode,CountDownL 0) $ makeCountDownSwitch n m1 m2 ~> flattened 
    where
-    makeCountDownSwitch m1' m2' = repeatedly $ do
-        s <- lift get
+    makeCountDownSwitch z m1' m2' = repeatedly $ do
+        (sMode,s) <- lift get
         nextMsg <- await 
         case s of
-            CountDown n' -> 
-                if n' <= n
-                    then do
-                        newMsg <- liftIO $ runT $ supply [nextMsg] m1'
-                        lift . modify $ \(CountDown x) -> CountDown (x + 1)
-                        yield newMsg
-                    else do
-                        lift . modify $ \x -> OnCD 
-                        newMsg <- liftIO $ runT $ supply [nextMsg] m2'
-                        yield newMsg
-            OnCD -> do 
-                        newMsg <- liftIO $ runT $ supply [nextMsg] m2'
-                        yield newMsg        
+          CountDownL n' -> 
+            if n' <= n
+              then do
+                newMsg <- liftIO $ runT $ supply [nextMsg] m1'
+                lift . modify $ \(m,CountDownL x) -> (m,CountDownL (x + 1))
+                yield newMsg
+              else do
+                lift . modify $ \(m,x) -> case m of 
+                  Blow -> (m,OnCD)
+                  Reset -> (m,CountDownR 0) 
+                newMsg <- liftIO $ runT $ supply [nextMsg] m2'
+                yield newMsg
+          CountDownR n' -> 
+            if n' <= n
+              then do
+                newMsg <- liftIO . runT $ supply [nextMsg] m2'
+                lift . modify $ \(m,CountDownR x) -> (m,CountDownR (x + 1))
+                yield newMsg 
+              else do
+                lift . modify $ (\(m,x) -> (m,CountDownL z))
+                newMsg <- liftIO $ runT $ supply [nextMsg] m1'
+                yield newMsg 
+          OnCD -> do 
+            newMsg <- liftIO $ runT $ supply [nextMsg] m2'
+            yield newMsg        
 
 ------
 -- timerSwitch. A higher order machine. Takes an int an two machines. Runs the first machine until n microseconds have passed, then switches to the second machine permanently. Note: Because this uses threadDelay, n might not be exact, but the timer period will never be *lower* than n. 

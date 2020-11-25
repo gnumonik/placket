@@ -85,6 +85,7 @@ library
           HigherOrderMachines
           UtilityMachines
       MachineParser
+      ArgumentParsers
       CommandParser
       SourceManager
       FactoryTypes

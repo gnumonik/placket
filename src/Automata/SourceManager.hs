@@ -74,12 +74,13 @@ sourceManager dChan toServer toSrc msgQueue = repeatedly $ do
 
     nextMsg        <- await
  
-    (SrcState _ b _) <- lift get
+    (SrcState _ b cnt) <- lift get
+    liftIO  $ atomically $  modifyTVar' cnt (+1)
 
     when (b == SRC_ACTIVE) $ do 
         yield nextMsg
-        (SrcState _ _ cnt) <- lift get 
-        liftIO  $ atomically $  modifyTVar' cnt (+1)
+
+
 
         --liftIO . atomically . writeTChan dChan $ "SourceManager got a packet: " <> T.pack (show nextMsg)
 

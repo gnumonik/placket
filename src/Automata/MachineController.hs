@@ -61,11 +61,10 @@ runCommand :: T.Text -> MyReader ()
 runCommand str = case parseLex commands str of
     Left err -> do
         chan <- askForDisplayChan
-        liftIO $ atomically $ writeTChan chan $
-            "Error: Invalid command string:\n\""
-            <> str
-            <> "\"\nParser error information:\n"
-            <> err
+        display $ "Error: Invalid command string:\n\""
+                <> str
+                <> "\"\nParser error information:\n"
+                <> err
     Right aCommand -> do
         e <- ask
         liftIO $ runReaderT aCommand e

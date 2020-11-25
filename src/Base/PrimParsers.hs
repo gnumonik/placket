@@ -41,6 +41,8 @@ instance ShowErrorComponent T.Text where
 
 -- toDec from https://stackoverflow.com/questions/5921573/convert-a-string-representing-a-binary-number-to-a-base-10-string-haskell
 
+
+
 filePath :: Parser FilePath 
 filePath = lexeme $ try $ do
     (void $ char '"') <?> "\""
@@ -48,12 +50,12 @@ filePath = lexeme $ try $ do
     (void $ char '"') <?> ("Error: No closing parentheses after " <> path)
     return path 
 
-
 int :: Parser Int
 int = lexeme $ try $ do
-    n' <- (some $ satisfy isDigit ) <?> "Error: Expected an integer, but received a non-digit character."
+    n' <- (some digitChar ) <?> "Error: Expected an integer, but received a non-digit character."
     let n = read n' :: Int
     return n 
+
 
 
 toDec :: String -> Int

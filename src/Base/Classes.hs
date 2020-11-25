@@ -130,6 +130,7 @@ data IPOctets = IPOctets {_oct1 :: !Word8
                          ,_oct4 :: !Word8} deriving (Eq,Show)
 makeFieldsNoPrefix ''IPOctets
 
+
 putIP4 :: IP4Address -> Put
 putIP4 ip = putWord32be . unIP4 $ ip 
 
@@ -224,14 +225,14 @@ instance Default MacAddr where
 putMacAddr :: MacAddr -> PutM ()
 putMacAddr (MacAddr a b c d e f) = 
   putWord8 a 
-  >> putWord8 b 
-  >> putWord8 c
-  >> putWord8 d
-  >> putWord8 e
-  >> putWord8 f
+  *> putWord8 b 
+  *> putWord8 c
+  *> putWord8 d
+  *> putWord8 e
+  *> putWord8 f
 
 prettyMac :: MacAddr -> T.Text
-prettyMac mac' = T.pack $ showHex (mac' ^. first8)     ":"
+prettyMac mac' = T.pack $ showHex (mac' ^. first8)   ":"
                         ++ showHex (mac' ^. second8) ":"
                         ++ showHex (mac' ^. third8)  ":"
                         ++ showHex (mac' ^. fourth8) ":"

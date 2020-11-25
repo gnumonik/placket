@@ -35,6 +35,7 @@ import Data.List (foldl')
 import Control.Monad
 import qualified Control.Exception as E 
 import Data.Hashable 
+import ArgumentParsers 
 import Data.Time.Clock 
 import Data.Time.Clock.System 
 import PrettyPrint 
@@ -72,6 +73,7 @@ commands = lexeme $ try $ do
         "deleteMachine"  -> deleteMachine
         "deleteFactory"  -> deleteF
         "clearFactories" -> clearFactories
+        "showFactories"  -> showFactories 
         _                -> fail $ "Error: " <> first <> " is not a valid packet string, or perhaps you forgot to preface a machine definition with m:, or a source definition with s:"
 
 
@@ -86,39 +88,46 @@ exit = lexeme $ try $ do
 saveFile :: Parser Command
 saveFile = lexeme $ try $ do
     void . lexeme $ string "save"
-    void . lexeme $ string "mode="
-    mode <- writeMode
-    fPath <- filePath
+    mode <- prefix "mode=" (Just Append) writeMode
+    fPath <- prefix "path=" Nothing filePath
     return $ do
         d <- askForDisplayChan
-        dat <- map ((\x -> "{ m: " <> x <> " }\n") . view schema . snd ) 
+        dat <- map ((\x -> "{ m: " <> x <> " }\n") . rebuildSchema . view schema . snd ) 
              . Map.toList <$> askForMachineData
-        sdat <- map ((\x -> "{ s: " <> x <> "} \n") . view srcSchema . snd) 
+        sdat <- map ((\x -> "{ s: " <> x <> "} \n") . rebuildSchema . view srcSchema . snd) 
              . Map.toList <$> askForSourceData
-        fdat <-  map formatFactory 
-              .  map snd 
+        fdat <-  map (formatFactory . snd) 
               .  Map.toList 
              <$> askForFactories  
         let defs = dat <> sdat <> fdat
         case mode of
             Write -> do
-                (a :: Either IOError ()) <- liftIO $ E.try (TIO.writeFile fPath "")
-                (b :: Either IOError ()) <- liftIO $ 
-                                          E.try (mapM_ (TIO.appendFile fPath) defs)
+                (a :: Either IOError ()) <- liftIO . E.try $ TIO.writeFile fPath ""
+
+                (b :: Either IOError ()) <- liftIO  
+                                            . E.try
+                                            $ mapM_ (TIO.appendFile fPath) defs
                 case sequence [a,b] of
-                    Right _ -> writeChan d $ "Success! Saved current definitions to" 
-                                          <> (T.pack fPath )
-                    Left err -> writeChan d . T.pack . show $ err 
+                    Right _ -> display $ "Success! Saved current definitions to " 
+                                       <> T.pack fPath 
+                    Left err -> display . T.pack . show $ err 
             Append -> do
-                liftIO $ mapM_ (TIO.appendFile fPath) defs
+                (b :: Either IOError ()) <- liftIO  
+                              . E.try
+                              $ mapM_ (TIO.appendFile fPath) defs
+                case b of
+                    Right _ -> display $ "Success! Saved current definitions to " 
+                                       <> T.pack fPath 
+                    Left err -> display . T.pack . show $ err 
+
    where
      formatFactory :: Factory -> T.Text
      formatFactory myFac = "{ f: " 
                           <> myFac ^. facName 
                           <> " = "
-                          <> myFac ^. (mchData . schema)
+                          <> myFac ^. (srcData . srcSchema . _2)
                           <> " >> "
-                          <> myFac ^. (srcData . srcSchema)
+                          <> myFac ^. (mchData . schema . _2)
                           <> " }\n"
 
 
@@ -130,7 +139,7 @@ loadFile = lexeme $ try $ do
         d <- askForDisplayChan
         file <- liftIO $ E.try (TIO.readFile fPath)
         case file of
-            Left (err :: IOError) -> writeChan d . ("Error! " <>) . T.pack . show $ err 
+            Left (err :: IOError) -> display . tShow $  err 
             Right myFile -> do
                 let unlined = T.filter (/= '\n') myFile 
                 case parseLex parseDefs unlined of
@@ -179,13 +188,12 @@ showMachines :: Parser Command
 showMachines = lexeme $ try $ do
     void . lexeme $ string "showMachines"
     return $! do
-        ms <- map snd . Map.toList <$> askForMachineData
-        let pretty = foldr (\x acc -> x ^. schema
-                                 : acc) [] ms
-        chan <- askForDisplayChan 
-        let myMachineIDs = formatList "\nAvailable machines" 
-                $ pretty
-        liftIO $ atomically $ writeTChan chan myMachineIDs
+        ms <- askForMachineData
+        let pretty = map (\x -> rebuildSchema $ x ^. schema ) $ map snd . Map.toList $ ms
+        chan <- askForDisplayChan  
+        let mysourceData = formatList "\nAvailable machines: "  pretty
+        liftIO . atomically . writeTChan chan $ mysourceData
+
 
 
 showSources :: Parser Command
@@ -193,13 +201,212 @@ showSources = lexeme $ try $ do
     void . lexeme $ string "showSources"
     return $! do
         ss <- askForSourceData
-        let pretty = foldr (\x acc -> fst x <> " :: " <> (snd x) ^. srcSchema : acc) [] $ Map.toList ss
+        let pretty = map (\x -> rebuildSchema $ x ^. srcSchema ) $ map snd . Map.toList $ ss
         chan <- askForDisplayChan  
         let mysourceData = formatList "\nAvailable sources: " $ pretty
         liftIO . atomically . writeTChan chan $ mysourceData
 
+showFactories :: Parser Command 
+showFactories = lexeme $ try $ do 
+  void . lexeme $ string "showFactories"
+  return $ do 
+    fs <- askForFactories
+    theTime <- liftIO $ getCurrentTime
+    display $ T.concat $ map (go theTime) (Map.toList fs)
+ where
+   go :: UTCTime -> (Word16,Factory) -> T.Text
+   go time (fID,fac) 
+
+      =  (makeLabelRow $ ("Name: " <> fac ^. facName))
+
+      <> makeDataRowLJ ["Factory ID: " <> (T.pack $ showHex fID "")]
+      <> (makeLabelRowDotted "Source code:")
+      <> makeDataRowLJ [fac ^. facName <> " = "
+                    <> fac ^. (srcData . srcSchema . _2)
+                    <> " >> " <> fac ^. (mchData . schema . _2)]
+      <> dotRow
+      <> makeDataRowLJ ["Status: "<> if fac ^. isActive then "Active" else "Inactive"]
+
+      <> if fac ^. isActive 
+          then case fac ^. startTime of
+                Just t -> makeDataRowLJ $ ["Uptime: " <> (tShow $ diffUTCTime time t)]
+                Nothing -> ""
+          else ""
+      <> dashRow
 
 
+
+-- factoryBuilder processes a factory definition and loads it into memory. 
+------
+factoryBuilder :: T.Text -> MyReader () 
+factoryBuilder txt =
+  except (parseLex splitFactory txt) >>= \case
+    Nothing -> return ()
+    Just (nmTxt,srcTxt,mchTxt) -> 
+      sourceBuilder Anonymous srcTxt >>= \case
+        Nothing -> return ()
+        Just mySrc ->  machineBuilder Anonymous mchTxt >>= \case
+          Nothing -> return ()
+          Just myMch -> mkFactoryV2 (Just nmTxt) myMch mySrc >>= \(fID,myFac) ->
+            (isJust <$> getFactoryByName (myFac ^. facName)) >>= \exists -> 
+              if exists
+                then display $ "Error! A factory named " <> (myFac ^. facName) <> " already exists."
+                else modifyEnv (over factories $ Map.insert fID myFac) >> 
+                    display ("Succesfully parsed factory " <> nmTxt)
+ where
+    splitFactory :: Parser (T.Text,T.Text,T.Text)
+    splitFactory = lexeme $ try $ do
+      option () space
+      fName <- T.pack <$>  (lexeme $ some (satisfy $ \x -> isLetter x || isDigit x))
+      option () space
+      void . lexeme $ char '='
+      rawSource <- T.pack <$> (lexeme $ manyTill anySingle (lookAhead $ string ">>"))
+      void . lexeme $ string ">>"
+      rawMachine <- T.pack <$> some anySingle
+      return $ (fName,rawSource,rawMachine)
+
+
+
+-- Stopping Factories 
+------
+
+data StopMode = StopSome | StopAll deriving Eq
+
+stopFactory :: Parser Command
+stopFactory = lexeme $ try $ do
+  void . lexeme $ string "stop"
+  option () space
+  facNm <- T.pack <$> lexeme (some (satisfy $ \x -> isLetter x || isDigit x))
+  option () space
+  return $ do
+      stopF StopSome facNm
+
+stopF :: StopMode -> T.Text -> Command 
+stopF sMode fName = do 
+  maybeF <- getFactoryByName fName 
+  case maybeF of
+        Nothing -> display $ "Error! No factory named " <> fName <> " exists!"
+        Just (fID, toStop) -> runStop sMode fID toStop
+
+runStop :: StopMode -> Word16 -> Factory -> Command 
+runStop sMode fID toStop = do 
+    if not (toStop ^. isActive)
+      then when (sMode == StopSome) $ do display $ "Factory " <> (toStop ^. facName) <> " cannot be stopped because it is not running."
+      
+      else do
+        writeQ (toStop ^. srcQ)  STOP
+        writeQ (toStop ^. snkQ)  SINK_STOP
+        sq <- askForServerQueue
+        writeQ sq $ NOMOREPACKETS . fromIntegral $ fID
+        modifyEnv . over factories $ Map.adjust (set isActive False . set startTime Nothing) fID
+        display $ "Successfully stopped factory " <> (toStop ^. facName)
+
+stopAll :: Parser Command
+stopAll = lexeme $ try $ do
+  void . lexeme $ string "stopAll"
+  return $ do
+    fs <- Map.toList <$> askForFactories
+    mapM_ (uncurry $ runStop StopAll) fs
+
+
+-- Killing factories (kill cancels the thread they are running in, "stop" just cuts off the source and plugs the sink)
+------
+killFactory :: Parser Command
+killFactory = lexeme $ try $ do
+  void . lexeme $ string "kill"
+  facIDStr <- T.pack <$> lexeme (some (satisfy $ \x -> isLetter x || isDigit x))
+  return $! do
+    killFac facIDStr 
+
+killFac :: T.Text -> Command 
+killFac fName  = do 
+  maybeF <- getFactoryByName fName 
+  case maybeF of
+      Nothing -> display $ "Error! No factory named " <> fName <> " exists!"
+      Just (fID, toKill) -> runKill fID toKill 
+      
+runKill :: Word16 -> Factory -> Command 
+runKill fID toKill = do
+        writeQ (toKill ^. srcQ)  STOP
+        writeQ (toKill ^. snkQ)  SINK_STOP
+        sq <- askForServerQueue
+        writeQ sq $ NOMOREPACKETS . fromIntegral $ fID
+        forM_ (toKill ^. fThread) (liftIO . uninterruptibleCancel)
+        modifyEnv . over factories $ Map.adjust (set isActive False . set fThread Nothing) fID
+        display $ "Successfully killed factory " <> (toKill ^. facName)
+
+killAll :: Parser Command
+killAll = lexeme $ try $ do
+  void . lexeme $ string "killAll"
+  return $ do
+    fs <-  Map.toList <$> askForFactories
+    mapM_ (uncurry runKill) fs
+
+
+-- Deleting/clearing factories (delete targets a single factory, clear wipes all of them from memory)
+------
+
+deleteF :: Parser Command
+deleteF = lexeme $ try $ do
+  void . lexeme $ string "deleteFactory"
+  facIDStr <- T.pack <$> lexeme (some (satisfy $ \x -> isLetter x || isDigit x))
+  return $ do
+    fac <- getFactoryByName facIDStr
+    case fac of
+      Nothing -> display $ "Error: Cannot delete factory " <> facIDStr <> "because it does not exist"
+      Just (fID,_) -> killFac facIDStr >> modifyEnv (over factories $ Map.delete fID )
+
+clearFactories :: Parser Command
+clearFactories = lexeme $ try $ do
+  void . lexeme $ string "clearFactories" 
+  return $ (Map.toList <$> askForFactories) >>= \fs -> 
+    mapM_ (uncurry runKill) fs >> (modifyEnv $ set factories Map.empty)
+
+
+-- Running and starting factories. "Run" is used to start up an unnamed factory, while "start" activates a factory that already exists 
+-- but either has not been activated yet, or has been stopped with "stop"
+------
+data InitMode = AlreadyThere | NeedsInserted deriving (Show, Eq)
+
+-- initFactory is the function that "turns a factory on". The InitMode paramer is used to signal different
+-- behavior depending on whether the factory already exists or not.
+------ 
+initFactory :: InitMode -> Word16 -> Factory -> MyReader () 
+initFactory iMode fID myFac = do 
+    let toRun  = myFac ^. factory
+    myThread  <- liftIO . async $ runT_ toRun 
+    theTime   <- liftIO getCurrentTime 
+    let activeFac = set fThread (Just myThread) . set startTime (Just theTime) . set isActive True $ myFac 
+    when (iMode == NeedsInserted) $ do 
+      modifyEnv $ over factories (Map.insert fID activeFac)
+    when (iMode == AlreadyThere) $ do
+      modifyEnv $ over factories $ Map.adjust 
+        (set fThread (Just myThread) . set startTime (Just theTime) . set isActive True) fID
+    sq <- askForServerQueue
+    liftIO . atomically . writeTBQueue sq $ GIMMEPACKETS (fromIntegral fID) (activeFac ^. fQueues)
+    display $ "Successfully activated Factory " 
+            <> (("FactoryID: " <>) . T.pack . (\x -> showHex x "") $ fID) 
+            <> "Factory Name: " <> (activeFac ^. facName)
+            <> ":\n" 
+            <>  (activeFac ^. (srcData . srcSchema . _2)) 
+            <> " >> " 
+            <> (activeFac ^. (mchData . schema . _2))
+
+startF :: Parser Command
+startF = lexeme $ try $ do
+  void . lexeme $ string "start"
+  option () space
+  fName <- T.pack <$> lexeme (some (satisfy $ \x -> isLetter x || isDigit x))
+  option () space
+  return $ do
+    maybeFac  <- getFactoryByName fName
+    case maybeFac of
+      Nothing -> display $ "Cannot start factory " <> fName <> " because it does not exist"
+      Just (fID,myFac) -> initFactory AlreadyThere fID myFac 
+
+-- run allows a factory to be assembled and activated without first defining it. 
+-- The syntax is: "run: <SOURCE> >> <MACHINE>"
+----- 
 runF :: Parser Command 
 runF = lexeme $ try $ do
     void . lexeme $ string "run:"
@@ -233,150 +440,17 @@ runF = lexeme $ try $ do
 
 
 
-factoryBuilder :: T.Text -> MyReader () 
-factoryBuilder txt =
-  except (parseLex splitFactory txt) >>= \case
-    Nothing -> return ()
-    Just (nmTxt,srcTxt,mchTxt) -> 
-      sourceBuilder Anonymous srcTxt >>= \case
-        Nothing -> return ()
-        Just mySrc ->  machineBuilder Anonymous mchTxt >>= \case
-          Nothing -> return ()
-          Just myMch -> mkFactoryV2 (Just nmTxt) myMch mySrc >>= \(fID,myFac) ->
-            modifyEnv (over factories $ Map.insert fID myFac) >> 
-            display ("Succesfully parsed factory " <> nmTxt)
- where
-    splitFactory :: Parser (T.Text,T.Text,T.Text)
-    splitFactory = lexeme $ try $ do
-      space
-      fName <- T.pack <$>  (lexeme $ some (satisfy $ \x -> isLetter x || isDigit x))
-      space
-      void . lexeme $ char '='
-      rawSource <- T.pack <$> (lexeme $ manyTill anySingle (lookAhead $ string ">>"))
-      void . lexeme $ string ">>"
-      rawMachine <- T.pack <$> some anySingle
-      return $ (fName,rawSource,rawMachine)
-
-data InitMode = AlreadyThere | NeedsInserted deriving (Show, Eq)
-
-initFactory :: InitMode -> Word16 -> Factory -> MyReader () 
-initFactory iMode fID myFac = do 
-    let toRun = myFac ^. factory
-    myThread <- liftIO . async $ runT_ toRun 
-    theTime <- liftIO getCurrentTime 
-    let activeFac = set fThread (Just myThread) . set startTime (Just theTime) . set isActive True $ myFac 
-    when (iMode == NeedsInserted) $ do 
-      modifyEnv $ over factories (Map.insert fID activeFac)
-    sq <- askForServerQueue
-    liftIO . atomically . writeTBQueue sq $ GIMMEPACKETS (fromIntegral fID) (activeFac ^. fQueues)
-    display $ "Successfully activated Factory " 
-            <> (T.pack . (\x -> showHex x "") $ fID) 
-            <> ":\n" 
-            <>  (activeFac ^. (srcData . srcSchema)) <> " >> " <> (activeFac ^. (mchData . schema))
 
 
-startF :: Parser Command
-startF = lexeme $ try $ do
-  void . lexeme $ string "start"
-  fName <- T.pack <$> lexeme (some (satisfy $ \x -> isLetter x || isDigit x))
-  return $ do
-    maybeFac  <- getFactoryByName fName
-    case maybeFac of
-      Nothing -> display $ "Cannot start factory " <> fName <> " because it does not exist"
-      Just (fID,myFac) -> initFactory AlreadyThere fID myFac 
-
-
+-- Utility command. Makes the packet server print a list of the factories that it is sending packets to. Used to determine whether a machine
+-- is broken.
+------
 debugServer :: Parser Command
 debugServer = lexeme $ try $ do
     void . lexeme $ string "debugServer"
     return $! do
         s <- askForServerQueue
         liftIO . atomically . writeTBQueue s $ SHOWACTIVE
-
-
-
-stopFactory :: Parser Command
-stopFactory = lexeme $ try $ do
-  void . lexeme $ string "stop"
-  facNm <- T.pack <$> lexeme (some (satisfy $ \x -> isLetter x || isDigit x))
-  return $ do
-      stopF facNm
-
-stopF :: T.Text -> Command 
-stopF fName = do 
-  maybeF <- getFactoryByName fName 
-  case maybeF of
-        Nothing -> display $ "Error! No factory named " <> fName <> " exists!"
-        Just (fID, toStop) -> runStop fID toStop
-
-runStop :: Word16 -> Factory -> Command 
-runStop fID toStop = do 
-    if toStop ^. isActive
-      then display $ "Factory " <> (toStop ^. facName) <> " cannot be stopped because it is not running."
-      else do
-        writeQ (toStop ^. srcQ)  STOP
-        writeQ (toStop ^. snkQ)  SINK_STOP
-        sq <- askForServerQueue
-        writeQ sq $ NOMOREPACKETS . fromIntegral $ fID
-        modifyEnv . over factories $ Map.adjust (set isActive False . set startTime Nothing) fID
-        display $ "Successfully stopped factory " <> (toStop ^. facName)
-
-
-killFactory :: Parser Command
-killFactory = lexeme $ try $ do
-  void . lexeme $ string "kill"
-  facIDStr <- T.pack <$> lexeme (some (satisfy $ \x -> isLetter x || isDigit x))
-  return $! do
-    killFac facIDStr 
-
-killFac :: T.Text -> Command 
-killFac fName  = do 
-  maybeF <- getFactoryByName fName 
-  case maybeF of
-      Nothing -> display $ "Error! No factory named " <> fName <> " exists!"
-      Just (fID, toKill) -> runKill fID toKill 
-      
-runKill :: Word16 -> Factory -> Command 
-runKill fID toKill = do
-        writeQ (toKill ^. srcQ)  STOP
-        writeQ (toKill ^. snkQ)  SINK_STOP
-        sq <- askForServerQueue
-        writeQ sq $ NOMOREPACKETS . fromIntegral $ fID
-        forM_ (toKill ^. fThread) (liftIO . uninterruptibleCancel)
-        modifyEnv . over factories $ Map.adjust (set isActive False . set fThread Nothing) fID
-        display $ "Successfully killed factory " <> (toKill ^. facName)
-
-
-deleteF :: Parser Command
-deleteF = lexeme $ try $ do
-  void . lexeme $ string "deleteFactory"
-  facIDStr <- T.pack <$> lexeme (some (satisfy $ \x -> isLetter x || isDigit x))
-  return $ do
-    fac <- getFactoryByName facIDStr
-    case fac of
-      Nothing -> display $ "Error: Cannot delete factory " <> facIDStr <> "because it does not exist"
-      Just (fID,_) -> killFac facIDStr >> modifyEnv (over factories $ Map.delete fID )
-
-clearFactories :: Parser Command
-clearFactories = lexeme $ try $ do
-  void . lexeme $ string "deleteFactories" 
-  return $ (Map.toList <$> askForFactories) >>= \fs -> 
-    mapM_ (uncurry runKill) fs >> (modifyEnv $ set factories Map.empty)
-
-stopAll :: Parser Command
-stopAll = lexeme $ try $ do
-  void . lexeme $ string "stopAll"
-  return $ do
-    fs <- Map.toList <$> askForFactories
-    mapM_ (uncurry runStop) fs
-
-killAll :: Parser Command
-killAll = lexeme $ try $ do
-  void . lexeme $ string "killAll"
-  return $ do
-    fs <-  Map.toList <$> askForFactories
-    mapM_ (uncurry runKill) fs
-
 
 
 all' :: Parser T.Text
@@ -471,36 +545,25 @@ parseDefs = lexeme $ try $ do
                 mapM_ factoryBuilder facDefs 
 
 sortInput :: Parser UserInput
-sortInput = lexeme $ do 
-  firstWord <- lookAhead (lexeme $ some (digitChar <|> letterChar))
-  case firstWord of
-
-    "f:"       -> factoryDef
-    "factory:" -> factoryDef
-
-    "s:"       -> sourceDef
-    "source:"  -> sourceDef
-
-    "m:"       -> machineDef
-    "machine:" -> machineDef
-
-    _ -> userCommand  
+sortInput = sourceDef <|> machineDef <|> factoryDef <|> userCommand 
 
 sourceDef :: Parser UserInput
 sourceDef = lexeme $ try $ do
+    option () space 
     sourceString
+    option () space 
     rest <- lexeme $ some anySingle
     return $! SourceDef . T.pack $ rest
     where
         sourceString :: Parser ()
         sourceString = lexeme $ try $ do
             option () space
-            _ <- (lexeme . try $ string "s:") <|> (lexeme $ string "source:")
+            _ <- (lexeme $ string "s:") <|> (lexeme $ string "source:")
             return ()
 
 machineDef :: Parser UserInput
 machineDef = lexeme $ try $ do
-    void $ (lexeme . try $ string "m:") <|> (lexeme $ string "machine:")
+    void $ (lexeme $ string "m:") <|> (lexeme $ string "machine:")
     rest <- lexeme $ some anySingle
     return $! MachineDef . T.pack $ rest
 
@@ -541,15 +604,15 @@ sourceBuilder :: BuilderMode -> T.Text -> MyReader (Maybe SourceData)
 sourceBuilder bMode inputString =
     case bMode of
       Named -> except (parseLex splitEq inputString) >>= \case 
-          Just (nm,srcTxt) -> go nm srcTxt inputString 
+          Just (nm,srcTxt) -> go bMode nm srcTxt inputString 
           Nothing -> return Nothing   
 
       Anonymous -> mkRandomSrcName >>= \sName -> 
         pure (sName <> " = " <> inputString) >>= \newString -> 
-           go sName inputString newString
+           go bMode sName inputString newString
    where
-     go :: T.Text -> T.Text -> T.Text -> MyReader (Maybe SourceData)
-     go srcName srcDefTxt rawString = do
+     go :: BuilderMode -> T.Text -> T.Text -> T.Text -> MyReader (Maybe SourceData)
+     go b srcName srcDefTxt rawString = do
        sData <- askForSourceData
        let alreadyExists = isJust $ Map.lookup srcName sData
        if alreadyExists
@@ -561,9 +624,11 @@ sourceBuilder bMode inputString =
                 except x >>= \case
                   Nothing -> return Nothing
                   Just z  -> 
-                    let mySrcData =  (SourceData z rawString) 
+                    let mySrcData =  (SourceData z (srcName,srcDefTxt)) 
                     in (modifyEnv $ over sourceData (Map.insert srcName mySrcData)) 
-                        >> display  ("Successfully compiled source " <> srcName )
+                        >> (if b == Named 
+                              then display  ("Successfully compiled source " <> srcName )
+                              else return () )
                         >> return (Just mySrcData)
 
 
@@ -575,17 +640,17 @@ machineBuilder bMode inputString =
       then do 
         case parseLex namedMachine inputString of
             Left err -> display err >> return Nothing 
-            Right nmed -> go nmed inputString
+            Right nmed -> go bMode nmed $ splitSchema inputString
 
       else do 
           newName <- mkRandomMchName 
           let newInString = newName <> " = " <> inputString 
           case parseLex namedMachine newInString  of
               Left err -> display err >> return Nothing
-              Right nmed -> go nmed newInString 
+              Right nmed -> go bMode nmed $ splitSchema newInString 
    where
 
-        go (NamedMachine nm arr ) inString = do
+        go bMode' (NamedMachine nm arr ) inString = do
               display $ "Processing machine " <> mchName nm
               e <- askForEnvironment
               st <- liftIO $ execStateT (makeMachines arr) (MyParserState (Right echo) [] e)
@@ -594,7 +659,8 @@ machineBuilder bMode inputString =
               let fs = st ^. funcsOnSuccess
               alreadyExists <- isRight <$> (getMachineDataByName nm)
               if alreadyExists
-                then (display $ "Error! A machine with name " <> mchName nm <> "already exists!") >> return Nothing 
+                then (display $ "Error! A machine with name " <> mchName nm <> " already exists!") 
+                     >> return Nothing 
                 else case mach of
                   Nothing -> do 
                         display $ "Failed to compile machine " <> mchName nm
@@ -604,12 +670,21 @@ machineBuilder bMode inputString =
                         e <- ask 
                         liftIO . atomically . modifyTVar' e $ over packetMachines (Map.insert nm myMachineData)
                         liftIO . atomically . modifyTVar' e $ updateEnv fs
-                        display $ "Success! Machine " <> mchName nm <> " has been compiled"
+                        when (bMode' == Named) $ display $ "Success! Machine " <> mchName nm <> " has been compiled"
                         return (Just myMachineData) 
 
         updateEnv :: [Environment -> Environment] -> Environment -> Environment
         updateEnv fs en = foldl' (\x f-> f x) en fs 
 
 
+trimSpaces :: T.Text -> T.Text
+trimSpaces txt = T.dropWhile (== ' ') . T.reverse $ T.dropWhile (== ' ') . T.reverse $ txt 
+
+rebuildSchema :: (T.Text,T.Text) -> T.Text
+rebuildSchema (n,d) = n <> " = " <> d
 
 
+splitSchema :: T.Text -> (T.Text,T.Text)
+splitSchema txt = let a = trimSpaces . T.takeWhile (/= '=') $ txt
+                      b = trimSpaces . T.drop 1 . T.dropWhile (/= '=') $ txt 
+                  in (a,b)

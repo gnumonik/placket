@@ -166,13 +166,13 @@ protocolSelectorExp = lexeme $ try $ do
 protocolSelectorPlus :: Parser ProtocolSelector
 protocolSelectorPlus = lexeme $ try $ do
     pType   <- protocolType
-    fSelExp <- fieldSelectorExpPlus
+    fSelExp <- option FieldSelectorExpWC fieldSelectorExpPlus
     return $! ProtocolSelector pType fSelExp  
 
 protocolSelector :: Parser ProtocolSelector
 protocolSelector = lexeme $ try $ do
     pType   <- protocolType
-    fSelExp <- fieldSelectorExp
+    fSelExp <- option FieldSelectorExpWC fieldSelectorExp
     return $! ProtocolSelector pType fSelExp  
 
 fieldSelectorExpPlus :: Parser FieldSelectorExp

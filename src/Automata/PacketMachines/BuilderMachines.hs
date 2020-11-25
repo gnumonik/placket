@@ -4,7 +4,7 @@ module BuilderMachines where
 import qualified Data.Vector as V
 import FieldClasses (Builder)
 import Staging
-import FactoryTypes (Message, PacketMachine, Delay, Repeats)
+import FactoryTypes
 import Data.Machine
 import Control.Monad.Trans.State.Strict
 import RecordTypes (ProtocolBuilder(ProtocolBuilder))
@@ -19,6 +19,7 @@ import Control.Monad.IO.Class
 import Control.Lens 
 import Control.Monad.Trans
 import PacketIO (mkPacketHeader)
+
 
 make :: V.Vector (V.Vector ProtocolMessage) -> Repeats -> Delay -> PacketMachine
 make myMsgs myRepeats myDelay 

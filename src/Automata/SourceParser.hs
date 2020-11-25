@@ -25,6 +25,7 @@ import Control.Concurrent.STM
 import Control.Lens (over, view)
 import PrimTypes (EthernetFrame(EthernetFrame))
 import RecordParsers (protocolType, protocolBuilder)
+import ArgumentParsers 
 
 
 type SourceParser = Parser (MyReader (Either T.Text PacketSrc))
@@ -32,26 +33,23 @@ type SourceParser = Parser (MyReader (Either T.Text PacketSrc))
 generateS :: SourceParser
 generateS = lexeme $ try $ do
     void $ lexeme $ string "generate"
-    void . lexeme $ string "wait="
-    dly <-   lexeme $ some (satisfy isDigit)
+    dly <- prefix "wait=" (Just 0) int 
     void . lexeme $ string "repeat="
-    rpts <-  lexeme $ some (satisfy isDigit)
+    rpts <-  prefix "repeat=" (Just 0) int 
     bld <- builder protocolBuilder
     let ps =  V.force <$> V.mapM PO.makeProtocolMessageV2 bld
     case ps of
             Left str -> return . return $! Left str
             Right bldr -> do
                 return . return $! 
-                 Right $ Generator $ generator bldr (Just $ read rpts :: Maybe Int) (Just $ read dly :: Maybe Int)
+                 Right $ Generator $ generator bldr (Just  rpts ) (Just dly )
 
 genRandomS :: SourceParser
 genRandomS = lexeme $ try $ do
     void . lexeme $ string "genRandoms"
-    n <- int 
-    void . lexeme $ string "wait="
-    dly <-   int
-    void . lexeme $ string "repeat="
-    rpts <-  int
+    n <- prefix "num=" (Just 1) int 
+    dly <-   prefix "wait=" (Just 0) int
+    rpts <-  prefix "repeat=" (Just 0) int 
     b <- builder protocolType 
     let myVec = PO.randomP b
     case myVec of
@@ -69,9 +67,9 @@ genRandomS = lexeme $ try $ do
 
 whyS :: SourceParser
 whyS = lexeme $ try $ do
-    first <- lexeme $ (between (lexeme $ char '(') (lexeme $ char ')') sources) 
+    first <- (lexeme $ (between (lexeme $ char '(') (lexeme $ char ')') sources) ) 
     void . lexeme $ string ":Y:"
-    second <- lexeme $ (between (lexeme $ char '(') (lexeme $ char ')') sources) 
+    second <- lexeme $ (between (lexeme $ char '(') (lexeme $ char ')') sources)  
     return $ do
         m1 <- first
         m2 <- second
@@ -82,9 +80,9 @@ whyS = lexeme $ try $ do
 teaS :: SourceParser 
 teaS = lexeme $ try $ do
     lexeme $ try $ do
-        first <- lexeme $ (between (lexeme $ char '(') (lexeme $ char ')') sources) 
+        first <- (lexeme $ (between (lexeme $ char '(') (lexeme $ char ')') sources) ) 
         void . lexeme $ string ":T:"
-        second <- lexeme $ (between (lexeme $ char '(') (lexeme $ char ')') sources) 
+        second <- (lexeme $ (between (lexeme $ char '(') (lexeme $ char ')') sources) ) 
         return $ do
             m1 <- first
             m2 <- second
@@ -94,7 +92,7 @@ teaS = lexeme $ try $ do
 
 sourceNm :: Parser T.Text
 sourceNm = lexeme $ try $ do
-    s <- some $ satisfy (\x -> isLetter x || isDigit x || x == '_')
+    s <- some $ letterChar <|> digitChar 
     return . T.pack $ s 
 
 
@@ -113,7 +111,7 @@ listenS = lexeme $ try $ do
 readPcapS :: SourceParser 
 readPcapS = lexeme $ try $ do
     void . lexeme $ string "read"
-    fPath <- filePath
+    fPath <- prefix "path=" Nothing filePath 
     return $ do
         paths <- ask >>= \e -> liftIO (readTVarIO e) >>= \e' -> return $ view openReadFiles e' 
         case Map.lookup fPath paths of
@@ -138,11 +136,13 @@ sourceByName = lexeme $ try $ do
 
 
 sources :: SourceParser
-sources = lexeme $ try $ do
+sources = whyS <|> teaS <|> listenS <|> generateS <|> readPcapS <|> genRandomS <|> sourceByName
+ where
+  go = lexeme $ try $ do 
     first <- lookAhead (some $ satisfy (/= ' '))
     case first of
         "listen"       -> listenS
         "generate"     -> generateS
         "read"         -> readPcapS
         "genRandoms"   -> genRandomS
-        _              -> whyS <|> teaS <|> sourceByName 
+        _              -> sourceByName 

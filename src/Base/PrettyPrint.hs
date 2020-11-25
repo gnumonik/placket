@@ -30,18 +30,6 @@ dashRow = "|" <> TL.toStrict (TL.take 78 dashes) <> "|\n"
 
 dotRow :: T.Text 
 dotRow = "|" <> TL.toStrict ( TL.take 78 $ TL.intersperse ' ' dots) <> "|\n"
-{--
-testPrettyPrint :: IO ()
-testPrettyPrint = do
-    g <- newStdGen
-    let randoL = randomRs (4,22) g
-    let randoAs = randomRs ('a','z') g
-    let listicle = zipWith replicate (take (head randoL) randoL) (take (head $ take (head randoL) (drop (head randoL) randoL)) randoAs)
-    putStr $ makeDataRowLJ $ take (head randoL) listicle
-    threadDelay 500000
-    testPrettyPrint
---}
-
 
 
 takeL :: Int -> TL.Text -> T.Text 

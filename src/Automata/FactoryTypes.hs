@@ -31,7 +31,6 @@ import Data.Serialize
 import Control.Concurrent.STM
 import Data.Map.Strict (Map)
 import Control.Monad.Trans.Reader
-
 import Network.Pcap (PcapHandle, PktHdr)
 import System.IO (Handle)
 import System.Random.Mersenne.Pure64
@@ -46,6 +45,43 @@ import Serializer (serializeMessage)
 import RecordTypes
 import Data.Kind (Type)
 import Unsafe.Coerce
+import Data.Time (formatTime)
+import Data.Time.Format (defaultTimeLocale)
+
+
+type family ConvFieldOf (a :: Type) 
+
+type instance ConvFieldOf IP4Packet = IP4Address 
+
+
+prettyTime :: UTCTime -> T.Text
+prettyTime utct = T.pack $ formatTime defaultTimeLocale "%y:%m:%d:%H:%m:%S" utct 
+
+newtype ConvID a = ConvID {getConvID :: (a,a)} deriving (Show, Eq, Ord )
+
+flipTuple :: (b, a) -> (a, b)
+flipTuple (a,b) = (b,a)
+
+class (ConvFieldOf a ~ b, Eq b) => HasConversation a b where
+  src          :: Eq b =>  a -> b
+  dst          :: Eq b => a -> b
+
+  conversation :: Eq b => a -> (b,b)
+  conversation a = (src a, dst a)
+
+  isResponseTo :: a -> a -> Bool
+  isResponseTo a1 a2 = conversation a1 == flipTuple (conversation a2)
+
+instance HasConversation IP4Packet IP4Address where
+  src = view i4Src
+  dst = view i4Dst
+  isResponseTo ip1 ip2 = src ip1 == dst ip2 
+
+
+newtype ConvMap a = ConvMap (Map (ConvFieldOf a, ConvFieldOf a) (V.Vector Message)) 
+
+
+data SwitchMode = Reset | Blow  deriving Eq
 
 
 data WriteMode = Write | Append
@@ -110,16 +146,15 @@ instance Checksum UDPMessage where
                 let len = (\x -> fromIntegral x :: Word16) 
                         . BS.length
                         . serializeMessage
-                        $ V.reverse 
-                        . V.takeWhile (\x -> not $ is @UDPMessage x) 
-                        $ V.reverse msg 
+                        . V.dropWhile (not . is @UDPMessage) 
+                        $ msg 
                     p :: forall a. Serialize a => a -> BS.ByteString
                     p = runPut . put 
-                    pseudoHeader = BS.concat $ map (runPut . put) [p . unIP4 $ ip ^. i4Src 
-                                                                  ,p . unIP4 $ ip ^. i4Dst
-                                                                  ,p (0 :: Word8)
-                                                                  ,p (17 :: Word8) 
-                                                                  ,p len ]
+                    pseudoHeader = BS.concat $ map runPut [putIP4 $ ip ^. i4Src 
+                                                          ,putIP4 $ ip ^. i4Dst
+                                                          ,putWord8 (0 :: Word8)
+                                                          ,putWord8 (17 :: Word8) 
+                                                          ,putWord16be len ]
                 in set uChecksum (calcIPChecksum . (pseudoHeader <>) . p $ set uLen len . set uChecksum 0 $ a) a 
             Nothing -> a
 
@@ -131,16 +166,15 @@ instance Checksum TCPSegment where
                 let len = (\x -> fromIntegral x :: Word16) 
                         . BS.length
                         . serializeMessage
-                        $ V.reverse 
-                        . V.takeWhile (\x -> not $ is @TCPSegment x) 
-                        $ V.reverse msg 
+                        $ V.dropWhile (not . is @TCPSegment) 
+                        $ msg 
                     p :: forall a. Serialize a => a -> BS.ByteString
                     p = runPut . put 
-                    pseudoHeader = BS.concat $ map (runPut . put) [p . unIP4 $ ip ^. i4Src 
-                                                                  ,p . unIP4 $ ip ^. i4Dst
-                                                                  ,p (0 :: Word8)
-                                                                  ,p (6 :: Word8) 
-                                                                  ,p len ]
+                    pseudoHeader = BS.concat $ map runPut [putIP4 $ ip ^. i4Src 
+                                                            ,putIP4 $ ip ^. i4Dst
+                                                            ,putWord8 0
+                                                            ,putWord8 6  
+                                                            ,putWord16be len ]
                 in set tChecksum (calcIPChecksum . (pseudoHeader <>) . p $ set tChecksum 0 $ a) a 
             Nothing -> a
 
@@ -151,7 +185,7 @@ instance Checksum MessageContent where
     mkChecksum _ = id 
 
 apChecksum :: V.Vector ProtocolMessage -> V.Vector ProtocolMessage
-apChecksum msg = go msg msg
+apChecksum msg = V.reverse $ go (V.reverse msg) (V.reverse msg)
     where
         go :: V.Vector ProtocolMessage -> V.Vector ProtocolMessage -> V.Vector ProtocolMessage 
         go vec acc = if V.null vec 
@@ -238,7 +272,7 @@ data ToServer
 data ToSrc
     = STOP 
 
-type ARPCache = Map IP4Address (MacAddr, SystemTime)
+type ARPCache = Map IP4Address (MacAddr, UTCTime )
 
 data ServerState = ServerState {_directory   :: Map Int (TBQueue Message)
                                ,_serverStats :: Map Int Int}
@@ -303,13 +337,12 @@ type ArgExp = (ArgType, Arg I)
 data Arg (f :: k -> Type) where
     Arg :: f t -> Arg f
 
-class CoerceArg a where
-    coerceArg :: Proxy a -> Arg I -> a
-    coerceArg _ (Arg (I x)) = unsafeCoerce x :: a
 
-instance CoerceArg a 
+coerceArg :: Proxy a -> Arg I -> a
+coerceArg _ (Arg (I x)) = unsafeCoerce x :: a
 
-withArgType :: ArgType -> Arg I -> (forall a. CoerceArg a => ArgType -> a -> b) -> b 
+
+withArgType :: ArgType -> Arg I -> (forall a. ArgType -> a -> b) -> b 
 withArgType aType arg f =  case aType of
     ArgInt           -> f ArgInt           $ coerceArg (Proxy @Int) arg 
     ArgPType         -> f ArgPType         $ coerceArg (Proxy @PType) arg 
@@ -382,7 +415,7 @@ data SinkState = Disconnected | ConnectedTo (TBQueue Message) | SINK_INACTIVE
 
 data ToSink = ConnectTo (TBQueue Message) | Disconnect | SINK_STOP
 
-data SourceData = SourceData {_pktSrc :: !PacketSrc , _srcSchema :: !T.Text}
+data SourceData = SourceData {_pktSrc :: !PacketSrc , _srcSchema :: !(T.Text,T.Text)}
 
 newtype MachineName = MachineName {mchName :: T.Text} deriving (Show, Eq)
 
@@ -390,11 +423,11 @@ instance Ord MachineName where
     (MachineName x) <= (MachineName y) = x <= y
 
 data MachineData = MachineData {_packetMch   :: !PacketMachine 
-                               ,_schema      :: !(T.Text)
+                               ,_schema      :: !(T.Text,T.Text)
                                } 
 
 data Factory  = Factory {_factory     :: !(MachineT IO (Is ()) Message)
-                        ,_facName     :: T.Text
+                        ,_facName     :: !T.Text
                         ,_srcData     :: !SourceData 
                         ,_mchData     :: !MachineData 
                         ,_fThread     :: !(Maybe (Async ()))
