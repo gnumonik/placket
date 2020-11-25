@@ -35,10 +35,7 @@ switchMode = option Blow (reset <|> blow)
       return Blow
 
 ppMode :: Parser PrintMode
-ppMode = option Dflt go 
-  where
-    go = lexeme $ try $ do
-      void . lexeme $ string "mode="
+ppMode =  lexeme $ try $ do
       m <- lexeme $ string "hex" <|> string "bin" <|> string "default"
       case  m of
           "hex"     -> return Hex

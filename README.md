@@ -17,6 +17,7 @@ Pλacket requires two external dependencies: libtinfo and libpcap-dev
 If you do not have these libraries present, they can be installed on Ubuntu with:
 
 `sudo apt install libtinfo` 
+
 `sudo apt install libpcap-dev` 
 
 (Replace `sudo apt install` with `sudo dnf install` for Fedora).
@@ -36,13 +37,25 @@ And build Pλacket with the command:
 `stack build`
 
 *Note*: Compiling Pλacket might take a while, especially if you don't have (the needed versions of) any of the Haskell dependencies required.
+
 *Note*: Stack will download the appropriate version of the GHC Haskell compiler. The Haskell compiler is quite large, but after compiling you may delete it without any negative consequences. 
+
+Upon successful compilation of Pλacket, you should see a line of output that looks like:
+
+`Installing executable placket in </PATH/TO/BINARY>`
+
+The binary will be located in the `</PATH/TO/BINARY>` folder, and you may move it to a more suitable location if you like. 
+
+**IMPORTANT**: Because Pλacket depends on libpcap, you must either run it as root or set the CAP_NET_RAW and CAP_NET_ADMIN capabilities for your user account on your system. I **strongly** recommend that that you do not run Pλacket as root and instead take the capabilities approach. (Consult google for specific information on setting capabilities for your system.)
+
+
+
 
 # Packet Machines 
 
 User defined machines are constructed by combining and configuring the built-in machines provided by Pλacket. 
 
-The syntax for defining a machine is: `m: <NAME> = <MACHINE> :|`, where `<NAME>` is the name of the machine (only alphanumeric characters and underscores are allowed), and  `<MACHINE>` is either a a built-in machine, a user machine, or a combination (or composition) of built-in and/or user-defined machines.
+The syntax for defining a machine is: `m: <NAME> = <MACHINE> `, where `<NAME>` is the name of the machine (only alphanumeric characters and underscores are allowed), and  `<MACHINE>` is either a a built-in machine, a user machine, or a combination (or composition) of built-in and/or user-defined machines.
 
 There are three primitive operators for combining machines:
 

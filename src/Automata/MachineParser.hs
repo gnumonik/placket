@@ -186,7 +186,7 @@ getMachineByNameSTATE nm en
 prettyPrintR :: Parser (StateT MyParserState IO ParseOutput)
 prettyPrintR = lexeme $ try $ do
     void . lexeme $ (string "prettyPrint" <|> string "pp")
-    m <- ppMode
+    m <- prefix "mode=" (Just Dflt) ppMode
     return $ do
         d <- view (env . displayChan) <$> get
         return $! Right (prettyPrint d m,Nothing)
@@ -194,8 +194,8 @@ prettyPrintR = lexeme $ try $ do
 printFieldR :: Parser (StateT MyParserState IO ParseOutput)
 printFieldR = lexeme $ try $ do
     void . lexeme $ (string "printField" <|> string "pf")
-    l <- qsLabelPrefix 
-    m <- ppMode 
+    l <- prefix "label=" (Just "") quotedString
+    m <- prefix "mode=" (Just Dflt) ppMode 
     ptype <- protocolType
     ostr  <- opticStrings
     return $ do
@@ -208,9 +208,9 @@ printFieldR = lexeme $ try $ do
 writeFieldR :: Parser (StateT MyParserState IO ParseOutput)
 writeFieldR = lexeme $ try $ do
     void . lexeme $ (string "writeField" <|> string "wf")
-    fPath <- filePathPrefix 
-    l <- qsLabelPrefix
-    pMode <- ppMode
+    fPath <- prefix "path=" Nothing filePath 
+    l     <- prefix "label=" (Just "") qsLabelPrefix
+    pMode <- prefix "mode=" (Just Dflt) ppMode
     pType <- protocolType
     oStr  <- opticStrings
     return $ do

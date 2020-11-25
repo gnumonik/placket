@@ -94,28 +94,25 @@ fieldSingVal = lexeme $ try $ do
 protocolBuilder :: Parser ProtocolBuilder
 protocolBuilder = lexeme $ try $ do
     pType  <- protocolType
-    fBldXP <- fieldBuilderExp 
+    fBldXP <- option AllDefaults fieldBuilderExp
     return $! ProtocolBuilder pType fBldXP 
 
 fieldBuilderExp :: Parser FieldBuilderExp
 fieldBuilderExp = lexeme $ try $ do
-    void . lexeme $ char '('
-    myFields <- fieldBuilders <|> allDefaults 
-    void . lexeme $ char ')'
+    myFields <- option AllDefaults fieldBuilders
     return $! myFields
-   where
-       allDefaults :: Parser FieldBuilderExp
-       allDefaults = lexeme $ do
-           return AllDefaults
-       
+   where     
        fieldBuilders = lexeme $ try $ do 
-           fs <- some fieldBuilder
+           fs <- between 
+                    (lexeme . char $ '(') 
+                    (lexeme . char $ ')') 
+                    $ some fieldBuilder
            return $! FieldBuilderExp fs 
 
 fieldBuilder :: Parser FieldBuilder
 fieldBuilder = lexeme $ try $ do
     oStrs <- opticStrings
-    (void $ lexeme $ char '=') <?> "Error: Missing '=' after accessor string"
+    (void $ lexeme $ char '=') 
     fld   <- field
     return $! FieldBuilder oStrs fld
 
@@ -188,12 +185,11 @@ fieldSelectorExpPlus = lexeme $ try $ do
 fieldSelectorExp :: Parser FieldSelectorExp
 fieldSelectorExp = lexeme $ try $ do
     void . lexeme $ char '('
-    myFieldPred <- lexeme $ (many (predicate fieldSelector))
+    myFieldPred <- option [] (lexeme $ sepBy1 (predicate fieldSelector) (lexeme . char $ ';'))
     void . lexeme $ char ')' 
     case myFieldPred of
-        [] -> return $ FieldSelectorExpWC 
-        [x] -> return $ FieldSelectorExp $ x
-        xs -> return $ FieldSelectorExp $ foldr1 (:&&:) xs 
+      [] -> return FieldSelectorExpWC
+      xs -> return $ FieldSelectorExp $ foldr1 (:&&:) xs 
 
 -- Not every function can make sensible use of the RefVarExpr
 fieldSelectorPlus :: Parser FieldSelector 
@@ -207,15 +203,15 @@ fieldSelector :: Parser FieldSelector
 fieldSelector =  lexeme $ try $ do
     oStrs       <- opticStrings 
     myComp      <- comp
-    myCompareTo <- literal <|> compareToWC 
+    myCompareTo <- compareToWC <|> literal
     return $! FieldSelector oStrs myComp myCompareTo 
 
 varExpr :: Parser CompareTo
 varExpr = lexeme $ try $ do
-        (void $ lexeme $ string "$(") <?> "Error: Expected a variable expression beginning with '$(', but did not receive the '$('"
+        (void $ lexeme $ string "$(") <?> " variable expression beginning with '$('"
         oStr <- opticStrings
        -- myOp <- (just operation) <|> nothing
-        (void $ lexeme $ string ")") <?> "Error: Missing ')' in variable expression."
+        (void $ lexeme $ string ")") 
         return $! RefVarExpr oStr Nothing --myOp
 
 literal :: Parser CompareTo
@@ -225,10 +221,11 @@ literal = lexeme $ try $ do
 
 compareToWC :: Parser CompareTo
 compareToWC = lexeme $ try $ do
+    void . lexeme $ char '*'
     return $! CompareToWC 
 
 comp :: Parser Comp
-comp = (eq' <|> noteq' <|> lt' <|> lte' <|> gt' <|> gte') <?> "Error: Invalid comparison operator. Valid comparison operators are =,/=,!=,>,>=,<,<="
+comp = (eq' <|> noteq' <|> lte' <|> lt' <|> gte' <|> gt') <?> "Valid comparison operator, i.e.  =,/=,!=,>,>=,<,<="
     where
         eq' :: Parser Comp
         eq' = lexeme $ try $ do

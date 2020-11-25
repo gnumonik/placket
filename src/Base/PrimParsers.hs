@@ -45,10 +45,8 @@ instance ShowErrorComponent T.Text where
 
 filePath :: Parser FilePath 
 filePath = lexeme $ try $ do
-    (void $ char '"') <?> "\""
-    path <- some $ satisfy (/= '"')
-    (void $ char '"') <?> ("Error: No closing parentheses after " <> path)
-    return path 
+    path <- quotedString
+    return . T.unpack $ path 
 
 int :: Parser Int
 int = lexeme $ try $ do
@@ -116,10 +114,10 @@ singleValue = lexeme $ try $ do
 
 atLeastTwo :: Parser [T.Text]
 atLeastTwo = lexeme $ try $ do
-    void $ char '<'
+    void $ char '['
     first <- singleValue
-    rest <- manyTill singleValue (lookAhead $ char ']')
-    void $ char '>'
+    rest <- manyTill (singleValue) (lookAhead $ char ']')
+    void $ char ']'
     return $ first : rest
 
 
@@ -333,11 +331,12 @@ flag = flagBool <|> flagNum
                 'F' -> return False
                 _   -> fail $ "Error: Cannot parse char \'" ++  [myChar] ++ "\' as a flag. Use T to indicate that a flag is set and F to indicate that it is not, e.g.: myFlag=T or myFlag=F"
 
+-- Broken as hell
 dnsName :: Parser DNSName
 dnsName = lexeme $ try $ do
-    void $ lexeme $ char '\"'
-    myDNSName <- manyTill (dnspointer <|> dnsnamelabel) (satisfy $ (/= '\"'))
-    void $ lexeme $ char '\"'
+
+    myDNSName <- between (char '"') (char '"') $ some (dnspointer <|> dnsnamelabel) 
+
     return $ DNSName $ V.fromList myDNSName
   where
       dnspointer = lexeme $ try $ do
@@ -367,17 +366,6 @@ voidCh p = lexeme $ try $ do
 alwaysFail :: forall a. Parser a
 alwaysFail = lexeme $ try $ do
     fail ""
-
-
-
-opticsParser :: T.Text -> a -> Parser a
-opticsParser str o = lexeme $ try $ do
-    void $ lexeme $ string str
-    return  o
-    
-emptyString :: Parser T.Text 
-emptyString = lexeme $ try $ do
-    return ""
 
 
 quotedString :: Parser T.Text

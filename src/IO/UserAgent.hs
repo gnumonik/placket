@@ -146,7 +146,7 @@ userAgent chan = forever $ do
             liftIO $ atomically $ writeTChan chan $ T.pack i
         Nothing -> return ()
     liftIO $ threadDelay 1000
-
+{--
 testAgent :: UserInputChan -> InputT IO () 
 testAgent chan = forever $ do
     input <- getInputLine "> "
@@ -166,7 +166,7 @@ testAgent chan = forever $ do
        cmda = "m: cnt = countSwitch 100 (void :|) (report \"Counted 100 Packets\" :|) ~> prettyPrint default :| "
        cmd2 = "m: cnt = set IP4 (dst=255.255.255.255 src=192.168.0.151) ~> set ETH (dst=ff:ff:ff:ff:ff:ff etherType=2048) ~> send ~> count 50000 :|"
        cmd3 = "run: testRand >> cnt"
-
+--}
 
 printer :: DisplayChan -> (String -> IO ()) -> IO ()
 printer chan f = forever $ do
