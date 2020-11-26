@@ -12,6 +12,17 @@ packages:
   original:
     hackage: hex-text-0.1.0.0
 - completed:
+    name: network-info
+    version: 0.2.0.10
+    git: https://github.com/jacobstanley/network-info.git
+    pantry-tree:
+      size: 1155
+      sha256: 304fe4f4522a37e744646aa81dfcb91aa9058ec066edcc60e7d7d26191b63045
+    commit: 5309af48283e2f2ea9a48efd896c54e75cd15df8
+  original:
+    git: https://github.com/jacobstanley/network-info.git
+    commit: 5309af48283e2f2ea9a48efd896c54e75cd15df8
+- completed:
     name: pcap
     version: '0.5'
     git: https://github.com/gnumonik/pcap.git

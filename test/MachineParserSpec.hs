@@ -242,9 +242,159 @@ testMachineParsers = hspec $
         runTest "set IP4" >>= \x -> x `shouldBe` Pass 
 
     -- if this fails i'll eat a toaster 
-
     describe "checksum" $ do 
       it "passes" $ 
         runTest "checksum" >>= \x -> x `shouldBe` Pass 
 
+    describe "modifyOpt" $ do
+      it "passes" $ 
+        runTest "modifyOpt IP4 opts [(opType.opClass/=0) => opType.opClass=8]" >>= \x -> 
+          x `shouldBe` Pass
     
+    describe "modifyOpt2" $ do
+      it "passes" $ 
+        runTest "mOpt IP4 opts [(opType.opClass/=0) => opType.opClass=8]" >>= \x -> 
+          x `shouldBe` Pass 
+
+    describe "insertOpt" $ do
+      it "passes" $ 
+        runTest "insertOpt IP4 opts (opType.opNum=2 opType.opClass=3 opType.opNum=4 opLength=6 opData=face)" >>= \x -> 
+          x `shouldBe` Pass 
+
+    describe "insertOpt" $ do
+      it "passes" $ 
+        runTest "iOpt IP4 opts (opType.opNum=2 opType.opClass=3 opType.opNum=4 opLength=6 opData=face)" >>= \x -> 
+          x `shouldBe` Pass 
+
+    describe "deleteOpt" $ do
+      it "passes" $ 
+        runTest "deleteOpt IP4 opts (opType.opNum=3 || opType.opNum<2)" >>= \x -> 
+          x `shouldBe` Pass 
+
+    describe "expSelect" $ do
+      it "passes" $ 
+        runTest "expSelect [* ; TCP (src=443 || dst=443) ; *]" >>= \x -> 
+          x `shouldBe` Pass
+
+    describe "select1" $ do 
+      it "passes" $ 
+        runTest "select ARP" >>= \x -> x `shouldBe` Pass 
+
+    describe "select2" $ do 
+      it "passes" $ 
+        runTest "select ARP (op>2 && hrd!=6)" >>= \x -> x `shouldBe` Pass 
+
+    describe "discard" $ do
+      it "passes" $ 
+        runTest "discard ARP" >>= \x -> x `shouldBe` Pass 
+
+    describe "discard2" $ do 
+      it "passes" $ 
+        runTest "discard TCP(win<600)" >>= \x -> x `shouldBe` Pass 
+
+    describe "alert" $ do
+      it "passes" $ 
+        runTest "alert \"someAlert\" IP4(flags.df=T || checksum=0)" >>= \x -> 
+          x `shouldBe` Pass 
+
+    -- need to rework 'stash'
+
+    describe "void" $ do 
+      it "passes" $ 
+        runTest "void" >>= \x -> x `shouldBe` Pass
+
+    describe "report" $ do 
+      it "passes" $ 
+        runTest "report \"SHOOP!\"" >>= \x -> x `shouldBe` Pass 
+
+    describe "create1" $ do
+      it "passes" $ 
+        runTest ("create wait=0 repeat=0 [ARP (op=2 tpa=192.168.0.2)" 
+                <> "; ETH (etherType=2054)]" ) >>= \x -> x `shouldBe` Pass    
+
+    describe "create2" $ do
+      it "passes" $ 
+        runTest ("create repeat=0 [ARP (op=2 tpa=192.168.0.2)" 
+                <> "; ETH (etherType=2054)]" ) >>= \x -> x `shouldBe` Pass    
+
+    describe "create3" $ do
+      it "passes" $ 
+        runTest ("create [ARP (op=2 tpa=192.168.0.2)" 
+                <> "; ETH (etherType=2054)]" ) >>= \x -> x `shouldBe` Pass    
+
+    describe "create1" $ do
+      it "passes" $ 
+        runTest ("create 0 0 [ARP (op=2 tpa=192.168.0.2)" 
+                <> "; ETH (etherType=2054)]" ) >>= \x -> x `shouldBe` Pass    
+
+    describe "count" $ do 
+      it "passes" $ 
+        runTest "count 100" >>= \x -> x `shouldBe` Pass 
+
+    describe "buffer" $ do
+      it "passes" $ 
+        runTest "buffer 100" >>= \x -> x `shouldBe` Pass 
+
+    describe "dump1" $ do
+      it "passes" $ 
+        runTest "dump path=\"/home/gnumonic/DUMPPPP\" numPackets=10000" >>= \x -> 
+          x `shouldBe` Pass 
+
+    describe "dump2" $ do
+      it "passes" $ 
+        runTest "dump \"/home/gnumonic/DUMPPPP\" 10000" >>= \x -> 
+          x `shouldBe` Pass 
+
+    describe "until" $ do 
+      it "passes" $ 
+        runTest "until TCP(seqNum>100) (pp)" >>= \x -> x `shouldBe` Pass 
+
+    describe "unless" $ do 
+      it "passes" $ 
+        runTest "unless IP4(flags.df=1) (void)" >>= \x -> x `shouldBe` Pass 
+
+    describe "when" $ do 
+      it "passes" $ 
+        runTest "when IP4(flags.df=1) (void)" >>= \x -> x `shouldBe` Pass   
+
+    describe "after" $ do 
+      it "passes" $ 
+        runTest "after TCP(seqNum>100) (pp)" >>= \x -> x `shouldBe` Pass 
+
+    describe "switch1" $ do 
+      it "passes" $ 
+        runTest "switch reset IP4(flags.df=T) (void) (pp)" >>= \x -> x `shouldBe` Pass 
+
+    describe "switch2" $ do 
+      it "passes" $ 
+        runTest "switch IP4(flags.df=T) (void) (pp)" >>= \x -> x `shouldBe` Pass 
+
+    describe "switch3" $ do 
+      it "passes" $ 
+        runTest "sw IP4(flags.df=T) (void) (pp)" >>= \x -> x `shouldBe` Pass 
+
+    describe "countSwitch" $ do 
+      it "passes" $ 
+        runTest "countSwitch 100 reset (pp) (void)" >>= \x -> x `shouldBe` Pass 
+
+    describe "countSwitch2" $ do 
+      it "passes" $ 
+        runTest "swC 100 reset (pp) (void)" >>= \x -> x `shouldBe` Pass 
+
+    describe "timeSwitch" $ do 
+      it "passes" $ 
+        runTest "timeSwitch 500000 (pp) (void)" >>= \x -> x `shouldBe` Pass 
+
+    describe "case" $ do 
+      it "passes" $ 
+        runTest "case [IP4 => (pp) ; ARP(op>2 || hrd/=4) => (report \"doop\") ]" >>= \x -> 
+          x `shouldBe` Pass 
+
+    describe "listenFor" $ do 
+      it "passes" $ 
+        runTest ("listenFor [ * ; IP4(proto=$(proto)) ; * ] timeout=2.5"
+                 <> "maxTimeouts=3 multiplier=.4 onResponse=(void)") >>= \x -> x `shouldBe` Pass 
+
+    describe "limit" $ do 
+      it "passes" $ 
+        runTest "limit 100 (report \"doop\")" >>= \x -> x `shouldBe` Pass  

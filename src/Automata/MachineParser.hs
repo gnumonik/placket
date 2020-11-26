@@ -317,16 +317,17 @@ chkSumR = lexeme $ try $ do
 -- Optional Field Machine Parsers. These have to be treated separately, since it's not possible to express operations on optional fields in normal record selector syntax (and extending it to do so would make it very ugly.)
 ------
 
-
+-- refactor to withOption? it would take a little work but you could just definte whole machines for optional fields. or at least a few. 
 modifyOptR :: Parser (StateT MyParserState IO ParseOutput)
 modifyOptR = lexeme $ try $ do
     void $ lexeme $ (string "modifyOpt" <|> string "mOpt")
     tStr <- protocolType 
     fStr <- lexeme $ some (satisfy (/= ' '))
-    void . lexeme $ string "when" 
+    void . lexeme $ char '['
     fSel <- fieldSelectorExp 
-    void . lexeme $ string "changeTo"
+    void . lexeme $ string "=>"
     fBld <- fieldBuilder
+    void . lexeme $ char ']'
     let myMod =  fmap liftMachine . join $ withOptionalField tStr (T.pack fStr) $
                     modifyOMatic fSel fBld
     case myMod of
@@ -338,7 +339,9 @@ insertOptR = lexeme $ try $ do
     void $ lexeme $ (string "insertOpt" <|> string "iOpt")
     tStr <- protocolType 
     fStr <- lexeme $ some (satisfy (/= ' ')) 
+    void . lexeme $ char '('
     fBld <- some fieldBuilder
+    void . lexeme $ char ')'
     let myInsert =  fmap liftMachine . join $ withOptionalField tStr (T.pack fStr) $    
                         insertOMatic fBld
     case myInsert of
@@ -409,11 +412,11 @@ alertR = lexeme $ try $ do
 stashR :: Parser (StateT MyParserState IO ParseOutput)
 stashR = lexeme $ try $ do
     void $ lexeme $ string "stash"
-    stashName <- some (satisfy $ (/= ' '))
+    stashName <- quotedString 
     return $! do
         s <- get
         let stashMap = s ^. (env . stashes)
-        case Map.lookup (T.pack stashName) stashMap of
+        case Map.lookup (stashName) stashMap of
             Just t  -> return $! Right $ (stash t,Nothing)
             Nothing -> do
                 t <- liftIO $ newTVarIO V.empty
@@ -421,7 +424,7 @@ stashR = lexeme $ try $ do
                         ( 
                             stash t
                             ,
-                            Just $ over stashes (\x -> Map.insert (T.pack stashName) t x)
+                            Just $ over stashes (\x -> Map.insert (stashName) t x)
                         )
 ------
 -- Parser for the void machine. It consumes all packets provided as input, and never outputs anything.
@@ -483,8 +486,8 @@ maybeInt = option Nothing go
 -----
 -- Parser for the counter machine. When counter has processed a specified  number of packets, it reports the time that it took to process that number.
 ----- 
-counterR :: Parser (StateT MyParserState IO ParseOutput)
-counterR = lexeme $ try $ do
+countR :: Parser (StateT MyParserState IO ParseOutput)
+countR = lexeme $ try $ do
     void $ lexeme $ string "count"
     toCount <- int 
     return $! do
@@ -505,7 +508,6 @@ dumpPktR :: Parser (StateT MyParserState IO ParseOutput)
 dumpPktR = lexeme $ try $ do
     void . lexeme $ string "dump"
     fPath <- prefix "path=" Nothing filePath
-    void . lexeme $ string "numPackets="
     n <- prefix "numPackets=" Nothing int 
     return $! do 
         paths <- view (env . openDumpFiles) <$> get
@@ -617,28 +619,30 @@ countSwitchR = lexeme $ try $ do
             Right [m1',m2'] -> return $ Right (counterSwitch mode n' m1' m2', Nothing)
             Left err -> return $ Left err
 
+
+-- Need to implement reset
 timeSwitchR :: Parser (StateT MyParserState IO ParseOutput)
 timeSwitchR = lexeme $ try $ do
     void $ lexeme  (string "timeSwitch" <|> "swT")
-    n <- lexeme $ some (satisfy isDigit)
+    n <- int
     mArg1 <- machineArrParens
     mArg2 <- machineArrParens
-    let n' = read n :: Int 
     return $! do
         m1 <- subMachines mArg1
         m2 <- subMachines mArg2
         case sequence [m1,m2] of
             Right [m1',m2'] -> do
                 myTVar <- liftIO $ newTVarIO Off
-                return $! Right $ (timerSwitch myTVar n' m1' m2', Nothing) 
+                return $! Right $ (timerSwitch myTVar n m1' m2', Nothing) 
             Left err -> return $ Left err
 
-caseSwitchR :: Parser (StateT MyParserState IO ParseOutput)
-caseSwitchR = lexeme $ try $ do
+caseR :: Parser (StateT MyParserState IO ParseOutput)
+caseR = lexeme $ try $ do
     void $ lexeme $ string "case"
-    void $ lexeme $ char '['
-    cases <- lexeme $ caseParser `sepBy1` (lexeme $ char ';')
-    void $ lexeme $ char ']'
+    cases <- between 
+              (lexeme $ char '[') 
+              (lexeme $ char ']')
+              (caseParser `sepBy1` (lexeme $ char ';'))
     return $! do 
         s <- get
         let e = s ^. env 
@@ -657,7 +661,7 @@ caseParser :: Parser (Either T.Text (Predicate, MachineArrow T.Text))
 caseParser = lexeme $ try $ do
     myPredicate <- protoSelectorPredicate
     void $ lexeme $ string "=>"
-    machName <- machineArrow
+    machName <- machineArrParens 
     return $! (\x -> (x , machName)) <$> myPredicate 
 
 
@@ -687,7 +691,7 @@ listenForR = lexeme $ try $ do
     dbl    <- prefix "timeout=" Nothing double 
     maxTOs <- prefix "maxTimeouts=" Nothing int 
     mult   <- prefix "multiplier=" Nothing double
-    mArg   <- prefix "onResponse" Nothing machineArrParens
+    mArg   <- prefix "onResponse=" Nothing machineArrParens
     -- need to write a parser for the "OnTimeout" function
     return $! do
         m <- subMachines mArg
@@ -772,7 +776,7 @@ machines = lexeme
         <|> debugR
         <|> reportR
         <|> createR
-        <|> counterR
+        <|> countR
         <|> bufferR
         <|> untilR
         <|> unlessR
@@ -782,7 +786,7 @@ machines = lexeme
         <|> switchR
         <|> countSwitchR
         <|> timeSwitchR
-        <|> caseSwitchR
+        <|> caseR
         <|> listenForR
         <|> limitR
         <|> sendIt

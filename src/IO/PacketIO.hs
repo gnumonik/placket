@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -9,16 +10,35 @@ import           Control.Monad                (void)
 import qualified Data.ByteString              as BS
 import           Data.Word                    (Word32, Word16, Word64)
 import           Network.Pcap                 
-import           PrimFuncs                    (toWord64)
+import           PrimFuncs                    ((|>), toWord64)
 import           Data.Time.Clock.System
 import           Data.Serialize 
 import qualified Data.Text as T
 import System.IO
 import Serializer
+import FieldClasses (pprint, PrintMode(..))
 import Staging
+import Network.Socket.Internal 
 import qualified Data.Vector as V
+import PrettyPrint
+import Classes
+import Network.Info 
 
+convIP4 (IPv4 a) = case decode . BS.reverse . encode $ a of 
+  Right ip -> IP4Address ip 
+  Left err -> error "Could not decode IP address"
+convIP6 (IPv6 a b c d) = encode d <> encode c <> encode b <> encode a 
+convMAC (MAC a b c d e f) = MacAddr a b c d e f 
 
+prettyInterface :: NetworkInterface -> T.Text 
+prettyInterface (NetworkInterface nm i4 i6 mac) 
+    = spaceRow'  
+    <>  makeLabelRowLJ (T.pack nm)
+    <>  makeDataRowLJ  ["  |-IP4: " <> (pprint Dflt $ convIP4 i4)]
+    <>  makeDataRowLJ  ["  |-IP6: " <> (pprint Hex $ convIP6 i6)]
+    <>  makeDataRowLJ  ["  |-MAC: "  <>(pprint Dflt $ convMAC mac)]
+    <>  dashRow 
+    <>  spaceRow'
 
 data PcapGlobalHdr 
     = PcapGlobalHdr {_magicNumber   :: !Word32
@@ -34,10 +54,21 @@ putGlobalHeader (PcapGlobalHdr m vmj vmn off sf sl l2)
     = putWord32be m 
     *> putWord16be vmj 
     *> putWord16be vmn
-    *> putWord32be off
+    *> putWord32be off 
     *> putWord32be sf
     *> putWord32be sl
     *> putWord32be l2
+
+-- 0010 0001 , 0011 0011, 0110 0011 ,0000 1101,01001
+devinfo :: IO T.Text
+devinfo = do
+  T.concat . map prettyInterface <$> getNetworkInterfaces
+  
+        
+
+
+
+   
 
 mkPcapHdr :: Word32 -- snapLen
           -> Word32 -- Data Link Type (Eth = 1)

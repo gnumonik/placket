@@ -81,10 +81,10 @@ instance HasConversation IP4Packet IP4Address where
 newtype ConvMap a = ConvMap (Map (ConvFieldOf a, ConvFieldOf a) (V.Vector Message)) 
 
 
-data SwitchMode = Reset | Blow  deriving Eq
+data SwitchMode = Reset | Blow  deriving (Eq , Show, Read)
 
 
-data WriteMode = Write | Append
+data WriteMode = Write | Append deriving (Eq, Show, Read)
 -- MachineArrow: A data type that mirrors the structure of Packet Machine definitions. 
 -- Not strictly necessary, but useful in developing the parsers.
 -- Note: Might be able to simplify the parser if I gave it a traversable instance.

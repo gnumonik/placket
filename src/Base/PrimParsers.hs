@@ -41,7 +41,8 @@ instance ShowErrorComponent T.Text where
 
 -- toDec from https://stackoverflow.com/questions/5921573/convert-a-string-representing-a-binary-number-to-a-base-10-string-haskell
 
-
+aWord :: Parser T.Text 
+aWord = T.pack <$> manyTill (digitChar <|> letterChar) (char ' ')
 
 filePath :: Parser FilePath 
 filePath = lexeme $ try $ do
@@ -334,8 +335,8 @@ flag = flagBool <|> flagNum
 -- Broken as hell
 dnsName :: Parser DNSName
 dnsName = lexeme $ try $ do
-
-    myDNSName <- between (char '"') (char '"') $ some (dnspointer <|> dnsnamelabel) 
+    void $ char '"'
+    myDNSName <- some (dnspointer <|> dnsnamelabel) 
 
     return $ DNSName $ V.fromList myDNSName
   where
@@ -345,8 +346,10 @@ dnsName = lexeme $ try $ do
           return $ (DNSPointer n, DNSLabel BS.empty)
 
       dnsnamelabel = lexeme $ try $ do
-          rawStr <- manyTill (satisfy (\x -> x `notElem` ['.','@','\"'])) (lookAhead (voidCh (char '.') <|> voidCh (char '@')))
-          (voidCh (char '.') <|> voidCh (char '@') )
+          rawStr <- manyTill anySingle  (      void (char '.') 
+                                              <|> void (char '@') 
+                                              <|> void (char '\"')
+                                              <|> (void $ char '\"')) 
           let bStr = BSU.fromString rawStr
           let bsLen = fromIntegral (BS.length bStr) :: Word8
           return $ (DNSNameLen bsLen,DNSLabel bStr)

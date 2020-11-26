@@ -43,6 +43,8 @@ rebuild-ghc-options: true
 extra-deps:
 - hex-text-0.1.0.0
 # - acme-missiles-0.3
+- git: https://github.com/jacobstanley/network-info.git
+  commit: 5309af48283e2f2ea9a48efd896c54e75cd15df8
 - git: https://github.com/gnumonik/pcap.git
   commit: ff07b1ae3299e1c375be427d5ce4db0639fead29
 #

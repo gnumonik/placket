@@ -190,6 +190,7 @@ executable placket
     , text
     , pcap
     , haskeline 
+    , network-info
   default-language: Haskell2010
 
 test-suite unit-tests

@@ -35,6 +35,7 @@ import Data.List (foldl')
 import Control.Monad
 import qualified Control.Exception as E 
 import Data.Hashable 
+import PacketIO 
 import ArgumentParsers 
 import Data.Time.Clock 
 import Data.Time.Clock.System 
@@ -74,8 +75,14 @@ commands = lexeme $ try $ do
         "deleteFactory"  -> deleteF
         "clearFactories" -> clearFactories
         "showFactories"  -> showFactories 
+        "deviceInfo"     -> deviceInfo
         _                -> fail $ "Error: " <> first <> " is not a valid packet string, or perhaps you forgot to preface a machine definition with m:, or a source definition with s:"
 
+deviceInfo :: Parser Command 
+deviceInfo = lexeme $ try $ do
+  void . lexeme $ string "deviceInfo"
+  return $ do
+    liftIO devinfo >>= display  
 
 exit :: Parser Command
 exit = lexeme $ try $ do

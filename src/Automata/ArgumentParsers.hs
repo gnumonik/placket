@@ -16,7 +16,7 @@ import PacketFilters ( apFilter, mkCompare )
 
 prefix :: T.Text -> Maybe a ->  Parser a -> Parser a
 prefix str a p = case a of
-  Nothing -> go
+  Nothing -> try p <|> go
   Just a' -> try p <|> option a' go 
  where 
    go = lexeme $ try $ do

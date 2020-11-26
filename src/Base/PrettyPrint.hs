@@ -31,6 +31,11 @@ dashRow = "|" <> TL.toStrict (TL.take 78 dashes) <> "|\n"
 dotRow :: T.Text 
 dotRow = "|" <> TL.toStrict ( TL.take 78 $ TL.intersperse ' ' dots) <> "|\n"
 
+spaceRow :: T.Text 
+spaceRow = "|" <> TL.toStrict ( TL.take 78 $ spaces) <> "|\n"
+
+spaceRow' :: T.Text
+spaceRow' = (TL.toStrict $ TL.take 80 spaces) <> "\n"
 
 takeL :: Int -> TL.Text -> T.Text 
 takeL n lTxt = TL.toStrict $ TL.take (fromIntegral n) lTxt 
@@ -39,14 +44,29 @@ padDifference :: T.Text -> T.Text
 padDifference str = let diff = 20 - T.length str 
                     in str <> takeL diff dashes
 makeLabelRow :: T.Text -> T.Text
-makeLabelRow str = if T.length str `mod` 2 == 0 then "|" <> paddashes <> str <> paddashes <> "|\n" else "|" <> paddashes <> str <> paddashes <> "-|\n"
-    where
-    paddashes = takeL ((78 - T.length str) `div` 2) dashes
+makeLabelRow str =   
+  let str' = "<<<  " <> str <> "  >>>"
+      paddashes = takeL ((78 - T.length str') `div` 2) dashes
+  in if T.length str' `mod` 2 == 0 
+      then "|" <> paddashes <> str' <> paddashes <> "|\n" 
+      else "|" <> paddashes <> str' <> paddashes <> "-|\n"
+
+makeLabelRowLJ :: T.Text -> T.Text
+makeLabelRowLJ txt = 
+  let txt' = txt <> " "
+      remaining = 76 - T.length txt' 
+  in "|- " <> txt' <> (takeL remaining dashes) <> "|\n" 
+    
 
 makeLabelRowDotted :: T.Text -> T.Text
-makeLabelRowDotted str = if T.length str `mod` 2 == 0 then "|" <> paddots <> str <> paddots <> "|\n" else "|" <> paddots  <> str <> paddots<> "-|\n"
-    where
-    paddots = takeL ((78 - T.length str) `div` 2) dots
+makeLabelRowDotted str = 
+  let str' = "<<<  " <> str <> "  >>>"
+      paddots = takeL ((78 - T.length str') `div` 2) dots
+  in if T.length str' `mod` 2 == 0 
+      then "|" <> paddots  <> str' <> paddots <> "|\n" 
+      else "|" <> paddots  <> str' <> paddots <> "-|\n"
+ 
+    
 
 makeDataRow :: [T.Text] -> T.Text
 makeDataRow xs
@@ -146,8 +166,8 @@ largestField = foldr ((\ x y -> if x > y then x else y) . T.length) 0
 
 leftJustify :: (Int, Int) -> [T.Text] -> T.Text
 leftJustify _        [y] = y <> takeL (78 - T.length y) spaces
-leftJustify (res,rem') ys 
-    = if rem' > numFields ys 
+leftJustify (res,rem') (y:ys)  
+    = y <> if rem' > numFields ys 
         then leftJustify (res + newRes, newRem) ys 
         else T.concat $ map (\x -> x <> takeL res spaces) ys
     where
