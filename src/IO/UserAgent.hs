@@ -64,10 +64,13 @@ initializeApp = do
 
     seed <- newPureMT 
 
+    devs <- getDevices 
+
 -- Initialize PCAP (NOTE: Switch to bounded channels so packets don't accrete forever)
     pcapHandle <- initPCAP --initOffline --initPCAP
 
     let initEnv = Environment  
+                  devs 
                   tCount
                   pktFactories 
                   pktMachines 

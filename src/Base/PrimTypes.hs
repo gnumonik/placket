@@ -32,12 +32,13 @@ import qualified Data.ByteString as BS
 import           Data.Typeable
 import           Data.Word       (Word16, Word32, Word8)
 import           Generics.SOP.TH
+import           Data.Map.Strict 
 import           THDefaults 
 import GenericFunctions 
+import qualified Data.Text as T
  
 
-
-   
+ 
 
 {-------------------------------
 --------------------------------
@@ -403,3 +404,11 @@ deriveGeneric ''DNSMessage
 
 
 concat <$> mapM deriveDefault [''EthernetFrame,''ARPMessage,''IP4Packet,''ICMPMessage, ''TCPSegment, ''UDPMessage, ''DNSMessage]
+
+data DevInfo = DevInfo  {_myIP4 :: IP4Address
+                         ,_myIP6 :: BS.ByteString-- IP6Address
+                         ,_myMac :: MacAddr} deriving (Show, Eq)
+
+type Devices = Map T.Text DevInfo
+
+makeLenses ''DevInfo

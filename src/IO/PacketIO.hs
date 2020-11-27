@@ -18,16 +18,26 @@ import System.IO
 import Serializer
 import FieldClasses (pprint, PrintMode(..))
 import Staging
+import PrimTypes 
 import Network.Socket.Internal 
 import qualified Data.Vector as V
 import PrettyPrint
 import Classes
 import Network.Info 
+import qualified Data.Map.Strict as Map
+import Data.List (foldl')
 
+
+
+convIP4 :: IPv4 -> IP4Address
 convIP4 (IPv4 a) = case decode . BS.reverse . encode $ a of 
   Right ip -> IP4Address ip 
   Left err -> error "Could not decode IP address"
+
+convIP6 :: IPv6 -> BS.ByteString
 convIP6 (IPv6 a b c d) = encode d <> encode c <> encode b <> encode a 
+
+convMAC :: MAC -> MacAddr
 convMAC (MAC a b c d e f) = MacAddr a b c d e f 
 
 prettyInterface :: NetworkInterface -> T.Text 
@@ -59,16 +69,20 @@ putGlobalHeader (PcapGlobalHdr m vmj vmn off sf sl l2)
     *> putWord32be sl
     *> putWord32be l2
 
+getDevices :: IO Devices 
+getDevices = do 
+  netInfo <- getNetworkInterfaces
+  let myMap = Map.empty 
+  return $ foldl' (\x (n,d) -> Map.insert n d x) myMap $ map go netInfo
+ where 
+   go :: NetworkInterface -> (T.Text, DevInfo )
+   go (NetworkInterface nm i4 i6 mac) =  (T.pack nm, DevInfo (convIP4 i4) (convIP6 i6) (convMAC mac))
+     
 -- 0010 0001 , 0011 0011, 0110 0011 ,0000 1101,01001
 devinfo :: IO T.Text
 devinfo = do
   T.concat . map prettyInterface <$> getNetworkInterfaces
   
-        
-
-
-
-   
 
 mkPcapHdr :: Word32 -- snapLen
           -> Word32 -- Data Link Type (Eth = 1)
@@ -120,9 +134,6 @@ dumpPacket hdl ((PktHdr a b _ _),pkt) = do
             let newHdrBS = runPut . putPktHdr $ PktHdr a b len len
             BS.hPut hdl $! newHdrBS <> bs
             return Nothing 
-
-
-
 
 
 atomicSendBS :: TMVar () -> PcapHandle -> BS.ByteString -> IO ()

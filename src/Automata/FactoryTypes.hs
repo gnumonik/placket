@@ -381,7 +381,8 @@ data MachineBuilder = MachineBuilder {_mbNm   :: T.Text
 
 
 
-data Environment = Environment  {_fTagCount       :: !TagCount
+data Environment = Environment  {_devices        :: !Devices 
+                                ,_fTagCount      :: !TagCount
                                 ,_factories      :: !(Map Word16 Factory)
                                 ,_packetMachines :: !(Map MachineName MachineData)
                                 ,_sourceData     :: !(Map T.Text SourceData)
