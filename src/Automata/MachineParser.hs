@@ -376,8 +376,8 @@ experimentalSelect = lexeme $ try $ do
 selectR :: Parser (StateT MyParserState IO ParseOutput)
 selectR = lexeme $ try $ do
     void $ lexeme $ string "select"
-    f <- protoSelectorPredicate 
-    let myselect = select <$> f
+    f <- protocolSelectorExp
+    let myselect = select <$> reducePSelExp f
     case myselect of
         Left err -> return . return $ Left err
         Right sel -> return . return $ Right (sel,Nothing)
@@ -385,8 +385,8 @@ selectR = lexeme $ try $ do
 discardR :: Parser (StateT MyParserState IO ParseOutput)
 discardR = lexeme $ try $ do
     void $ lexeme $ string "discard"
-    f <- protoSelectorPredicate
-    let myDiscard = discard <$> f
+    f <- protocolSelectorExp
+    let myDiscard = discard <$> reducePSelExp f
     case myDiscard of 
         Left err  -> return . return $ Left err
         Right dis -> return . return $ Right (dis,Nothing) 
@@ -398,13 +398,14 @@ alertR :: Parser (StateT MyParserState IO ParseOutput)
 alertR = lexeme $ try $ do
     void $ lexeme $ string "alert"
     alertStr <- lexeme $ quotedString
-    pred'    <- protoSelectorPredicate
-    case pred' of
-        Left str -> return . return $! Left str 
-        Right p -> return $! do
+    pred'    <- protocolSelectorExp
+    return $! do
             s <- get
-            let chan = s ^. (env . displayChan)
-            return $! Right $ (alert (Just p) alertStr chan , Nothing)  
+            let p = reducePSelExp pred' 
+            let d = view (env . displayChan) s 
+            case p of
+              Left err -> return $ Left err 
+              Right p' -> return $! Right $ (alert (Just p') alertStr d , Nothing)  
 -------
 -- Parser for the "stash" machine, which caches packets that it receives in memory. At the moment this doesn't do much, need to implement stash operations.
 -------
@@ -529,59 +530,63 @@ dumpPktR = lexeme $ try $ do
 untilR :: Parser (StateT MyParserState IO ParseOutput)
 untilR = lexeme $ try $ do
     void $ lexeme $ string "until"
-    p      <- protoSelectorPredicate
+    p      <- protocolSelectorExp
     mArg   <- machineArrParens
     return $! do
-        mArg' <- subMachines mArg 
+        mArg' <- subMachines mArg
+        let p' = reducePSelExp p
         case mArg' of
             Left err -> return $ Left err
             Right m -> 
-                case p of
-                    Right p' -> return $ Right (until p' m, Nothing)
+                case p' of
+                    Right aPred -> return $ Right (until aPred m, Nothing)
                     Left err -> return $ Left err 
 
 unlessR :: Parser (StateT MyParserState IO ParseOutput)
 unlessR = lexeme $ try $ do
     void . lexeme $ string "unless"
-    prd  <- protoSelectorPredicate
+    p  <- protocolSelectorExp
     mArg <- machineArrParens
     return $ do
         mArg' <- subMachines mArg
+        let p' = reducePSelExp p
         case mArg' of
             Left err -> return $ Left err
             Right m  -> 
-                case prd of
+                case p' of
                     Left err -> return $ Left err
-                    Right p  -> return $ Right (unless' p m,Nothing)
+                    Right aPred  -> return $ Right (unless' aPred m,Nothing)
 
 
 whenR :: Parser (StateT MyParserState IO ParseOutput)
 whenR = lexeme $ try $ do
     void . lexeme $ string "when"
-    p <- protoSelectorPredicate
+    p <- protocolSelectorExp
     mArg   <- machineArrParens
     return $! do
         mArg' <- subMachines mArg 
+        let p' = reducePSelExp p
         case mArg' of
             Left err -> return $ Left err
             Right m  -> 
-                case p of
-                    Right p' -> return $ Right (when' p' m, Nothing)
+                case p' of
+                    Right aPred -> return $ Right (when' aPred m, Nothing)
                     Left err -> return $ Left err 
 
 
 afterR :: Parser (StateT MyParserState IO ParseOutput)
 afterR = lexeme $ try $ do
     void $ lexeme $ string "after"
-    p      <- protoSelectorPredicate
+    p      <- protocolSelectorExp
     mArg   <- machineArrParens
     return $! do
-        mArg' <- subMachines mArg 
+        mArg' <- subMachines mArg
+        let p' = reducePSelExp p  
         case mArg' of
             Left err -> return $ Left err
             Right m  -> 
-                case p of
-                    Right p' -> return $ Right (after p' m, Nothing)
+                case p' of
+                    Right aPred -> return $ Right (after aPred m, Nothing)
                     Left err -> return $ Left err 
 
 
@@ -590,16 +595,17 @@ switchR :: Parser (StateT MyParserState IO ParseOutput)
 switchR = lexeme $ try $ do
     void $ lexeme $ (string "switch" <|> string "sw")
     mode   <- switchMode
-    p      <- protoSelectorPredicate
+    p      <- protocolSelectorExp
     mArg1  <- machineArrParens
     mArg2  <- machineArrParens
     return $! do
         m1 <- subMachines mArg1
         m2 <- subMachines mArg2
+        let p' = reducePSelExp p
         case sequence [m1,m2] of
             Right [m1',m2'] ->
-                case p of
-                    Right p' -> return $ Right (switch mode p' m1' m2', Nothing)
+                case p' of
+                    Right aPred -> return $ Right (switch mode aPred m1' m2', Nothing)
                     Left err -> return $ Left err
             Left err -> return $ Left err
 
@@ -639,15 +645,16 @@ timeSwitchR = lexeme $ try $ do
 caseR :: Parser (StateT MyParserState IO ParseOutput)
 caseR = lexeme $ try $ do
     void $ lexeme $ string "case"
-    cases <- between 
+    cases' <- between 
               (lexeme $ char '[') 
               (lexeme $ char ']')
               (caseParser `sepBy1` (lexeme $ char ';'))
     return $! do 
         s <- get
-        let e = s ^. env 
-        case sequence cases of
-            Left _ -> return $ Left $ formatList "" . lefts $ cases  
+        let e = s ^. env
+        let cases = reduceCases cases' 
+        case  cases of
+            Left err -> return $ Left err
             Right cs -> do
                 mchs <- mapM (\(x,y) -> sequence  (x, subMachines y)) cs 
                 let mchs' = foldr (\(x,y) acc -> case y of
@@ -657,12 +664,7 @@ caseR = lexeme $ try $ do
                     Left err -> return $ Left err
                     Right cases -> return $ Right (case' cases, Nothing)
 
-caseParser :: Parser (Either T.Text (Predicate, MachineArrow T.Text))
-caseParser = lexeme $ try $ do
-    myPredicate <- protoSelectorPredicate
-    void $ lexeme $ string "=>"
-    machName <- machineArrParens 
-    return $! (\x -> (x , machName)) <$> myPredicate 
+
 
 
 machByName :: Parser (StateT MyParserState IO ParseOutput)
@@ -845,100 +847,4 @@ machines = lexeme $ try $ do
 --}
 
 
-data NamedMachine = NamedMachine MachineName (MachineArrow T.Text) deriving (Show, Eq)
-
-namedMachine :: Parser NamedMachine
-namedMachine = lexeme $ try $ do
-    name   <- lexeme $ some (satisfy $ \x -> isLetter  x || isDigit x)
-    void $ lexeme $ string "="
-    mach <- machineArrow
-    return $! NamedMachine (MachineName . T.pack $ name) mach 
-
-
-
-machineArrParens :: Parser (MachineArrow T.Text)
-machineArrParens = lexeme $ try $ do
-    x <- recParens
-    let x' = T.drop 1 $ T.reverse  (T.drop 1 . T.reverse $ x) 
-    case parseLex machineArrow x' of
-        Left err -> fail $ show err
-        Right y -> return y 
-
-machineArrow :: Parser (MachineArrow T.Text)
-machineArrow = lexeme $ try $ do
-            a <- untilArr
-            aSymb <- voidEof <|> arrSymb
-            case aSymb of
-                "~>" -> do
-                    rest <- machineArrow 
-                    return $ a :~> rest
-                "~+>" -> do
-                    rest <- some machineArrParens
-                    return $   a :~+> rest
-                ":|"  -> return $  a :| ()
-
-arrSymb :: Parser T.Text
-arrSymb =  (lexeme $ try $ string "~>") <|> (lexeme $ try $ string "~+>") 
-
-
-
-voidEof :: Parser T.Text
-voidEof = lexeme $ try $ do
-    _ <- eof
-    return ":|"
-
-
-untilArr :: Parser T.Text
-untilArr = lexeme $ try $ do
-    first <- lexeme $ manyTill anySingle (lookAhead arrSymb <|> lookAhead (string "(") <|> voidEof)
-    sep   <- voidEof <|>  (lookAhead $ lexeme . try $ string "(") <|>  (lookAhead arrSymb)
-    case sep of
-        "(" -> do
-
-            btwn <- recParens -- between (char '(') (char ')') (many $ satisfy (\x -> x /= ')')) 
-
-            rest <- untilArr
-            return $ T.pack first <>  btwn <> rest
-        "[" -> do
-            btwn <- manyTill anySingle (lookAhead . lexeme $ char '[')
-            void . lexeme $ char ']' 
-            rest <- untilArr
-            return $ T.pack (first <> "[" <> btwn <> "]") <> rest
-        _   -> return $ T.pack  first 
-
-notSep :: Parser [Char]
-notSep = lexeme . try $ many $ satisfy (\x -> x `notElem` ("()" :: String))
-
-builder :: Parser a -> Parser (V.Vector a)
-builder p = lexeme $ try $ do
-    first <- (between 
-            (lexeme $ char '[') 
-            (lexeme $ char ']') 
-            (p  `sepBy1` (lexeme $ char ';') )) <?> "Error: Expected a builder. A builder has the form [ <SOMETHING> ; <MAYBE SOMETHING ELSE> ]"
-    return $! V.force $ V.fromList $ first 
-        
--- This is a hack to allow higher or machines to work properly. "ignores" nested parentheses between top-level machine arrows
--- (Doesn't actually ignore them, parses them then reconstructs the string)
-------
-recParens :: Parser T.Text
-recParens = lexeme $ try $ do 
-    (void . lexeme $ open) <?> "Error: Expected an open paren '('"
-    first <- manyTill anySingle (lookAhead open <|> lookAhead close)
-    c <- lookAhead . lexeme $ open <|> close
-    case c of
-        '(' -> do
-            child <- (some recParens) <?> "Error: Mismatched parentheses (maybe?)"
-            rest  <- manyTill anySingle close <?> "Expected a close paren ')' "
-            return $ "(" <> T.pack first <> T.concat child <> T.pack rest <> ")" 
-        ')' -> do
-            (void . lexeme $ close ) <?> "Error: Mismatched parentheses (maybe?)"
-            return $ "(" <> T.pack first <> ")"
-
-
-   where
-       open :: Parser Char
-       open = (lexeme . try $ char '(') 
-
-       close :: Parser Char
-       close = (lexeme . try $ char ')') 
 

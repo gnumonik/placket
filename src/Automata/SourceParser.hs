@@ -11,7 +11,7 @@ import FactoryTypes
 import Control.Monad
 import PrimParsers
 import Text.Megaparsec
-import MachineParser (builder)
+import MachineParser 
 import PacketIO 
 import Data.Proxy 
 import Data.Char

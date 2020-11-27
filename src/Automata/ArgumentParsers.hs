@@ -12,6 +12,8 @@ import qualified Data.Text as T
 import FieldClasses 
 import RecordFuncs
 import PacketFilters ( apFilter, mkCompare )
+import RecordTypes
+import qualified Data.Vector as V
 
 
 prefix :: T.Text -> Maybe a ->  Parser a -> Parser a
@@ -73,6 +75,11 @@ protoSelectorPredicate = do
         Right f -> Right $ apFilter (mkCompare f)
         Left errs -> Left $  errs 
 
+reducePSelExp :: ProtocolSelectorExp -> Either T.Text Predicate
+reducePSelExp pSelXP 
+    = evalProtoSelectExp pSelXP Nothing >>= \x -> 
+        return $ apFilter . mkCompare  $ x    
+
 
 intOptOne :: Parser Int
 intOptOne = option 1 int 
@@ -101,3 +108,115 @@ writeMode = (wr <|> apnd) <?> "Error: Invalid writeMode. Valid writeModes are wr
         apnd = lexeme $ try $ do
             (void $ string "append")
             return $ Append
+
+caseParser :: Parser (ProtocolSelectorExp, MachineArrow T.Text)
+caseParser = lexeme $ try $ do
+    myPredicate <- protocolSelectorExp
+    void $ lexeme $ string "=>"
+    mchArr <- machineArrParens 
+    return $! (myPredicate, mchArr)
+
+reduceCases :: [(ProtocolSelectorExp, MachineArrow T.Text)] -> Either T.Text [(Predicate, MachineArrow T.Text)]
+reduceCases = mapM reduceCase 
+
+reduceCase :: (ProtocolSelectorExp, MachineArrow T.Text) -> Either T.Text (Predicate, MachineArrow T.Text)
+reduceCase (p,m) = case reducePSelExp p of
+  Left err -> Left err 
+  Right aPred -> Right (aPred,m)
+
+data NamedMachine = NamedMachine MachineName (MachineArrow T.Text) deriving (Show, Eq)
+
+namedMachine :: Parser NamedMachine
+namedMachine = lexeme $ try $ do
+    name   <- lexeme $ some (digitChar <|> letterChar)
+    void $ lexeme $ string "="
+    mach <- machineArrow
+    return $! NamedMachine (MachineName . T.pack $ name) mach 
+
+
+
+machineArrParens :: Parser (MachineArrow T.Text)
+machineArrParens = lexeme $ try $ do
+    x <- recParens
+    let x' = T.drop 1 $ T.reverse  (T.drop 1 . T.reverse $ x) 
+    case parseLex machineArrow x' of
+        Left err -> fail $ show err
+        Right y -> return y 
+
+machineArrow :: Parser (MachineArrow T.Text)
+machineArrow = lexeme $ try $ do
+            a <- untilArr
+            aSymb <- voidEof <|> arrSymb
+            case aSymb of
+                "~>" -> do
+                    rest <- machineArrow 
+                    return $ a :~> rest
+                "~+>" -> do
+                    rest <- some machineArrParens
+                    return $   a :~+> rest
+                ":|"  -> return $  a :| ()
+
+arrSymb :: Parser T.Text
+arrSymb =  (lexeme $ try $ string "~>") <|> (lexeme $ try $ string "~+>") 
+
+
+
+voidEof :: Parser T.Text
+voidEof = lexeme $ try $ do
+    _ <- eof
+    return ":|"
+
+
+untilArr :: Parser T.Text
+untilArr = lexeme $ try $ do
+    first <- lexeme $ manyTill anySingle (lookAhead arrSymb <|> lookAhead (string "(") <|> voidEof)
+    sep   <- voidEof <|>  (lookAhead $ lexeme . try $ string "(") <|>  (lookAhead arrSymb)
+    case sep of
+        "(" -> do
+
+            btwn <- recParens -- between (char '(') (char ')') (many $ satisfy (\x -> x /= ')')) 
+
+            rest <- untilArr
+            return $ T.pack first <>  btwn <> rest
+        "[" -> do
+            btwn <- manyTill anySingle (lookAhead . lexeme $ char '[')
+            void . lexeme $ char ']' 
+            rest <- untilArr
+            return $ T.pack (first <> "[" <> btwn <> "]") <> rest
+        _   -> return $ T.pack  first 
+
+notSep :: Parser [Char]
+notSep = lexeme . try $ many $ satisfy (\x -> x `notElem` ("()" :: String))
+
+builder :: Parser a -> Parser (V.Vector a)
+builder p = lexeme $ try $ do
+    first <- (between 
+            (lexeme $ char '[') 
+            (lexeme $ char ']') 
+            (p  `sepBy1` (lexeme $ char ';') )) <?> "Error: Expected a builder. A builder has the form [ <SOMETHING> ; <MAYBE SOMETHING ELSE> ]"
+    return $! V.force $ V.fromList $ first 
+        
+-- This is a hack to allow higher or machines to work properly. "ignores" nested parentheses between top-level machine arrows
+-- (Doesn't actually ignore them, parses them then reconstructs the string)
+------
+recParens :: Parser T.Text
+recParens = lexeme $ try $ do 
+    (void . lexeme $ open) <?> "Error: Expected an open paren '('"
+    first <- manyTill anySingle (lookAhead open <|> lookAhead close)
+    c <- lookAhead . lexeme $ open <|> close
+    case c of
+        '(' -> do
+            child <- (some recParens) <?> "Error: Mismatched parentheses (maybe?)"
+            rest  <- manyTill anySingle close <?> "Expected a close paren ')' "
+            return $ "(" <> T.pack first <> T.concat child <> T.pack rest <> ")" 
+        ')' -> do
+            (void . lexeme $ close ) <?> "Error: Mismatched parentheses (maybe?)"
+            return $ "(" <> T.pack first <> ")"
+
+
+   where
+       open :: Parser Char
+       open = (lexeme . try $ char '(') 
+
+       close :: Parser Char
+       close = (lexeme . try $ char ')') 

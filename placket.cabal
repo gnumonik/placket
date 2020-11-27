@@ -97,6 +97,7 @@ library
       Randomizer
       PacketSources
       SourceParser
+      STLC
 
 -- Misc/Tests
     --  Tests

@@ -111,10 +111,13 @@ mkDummyState = do
 
     seed <- newPureMT 
 
+    devs <- getDevices 
+
 -- Initialize PCAP (NOTE: Switch to bounded channels so packets don't accrete forever)
     pcapHandle <- initPCAP --initOffline --initPCAP
 
     let initEnv = Environment  
+                  devs 
                   tCount
                   pktFactories 
                   pktMachines 
@@ -322,7 +325,7 @@ testMachineParsers = hspec $
         runTest ("create [ARP (op=2 tpa=192.168.0.2)" 
                 <> "; ETH (etherType=2054)]" ) >>= \x -> x `shouldBe` Pass    
 
-    describe "create1" $ do
+    describe "create4" $ do
       it "passes" $ 
         runTest ("create 0 0 [ARP (op=2 tpa=192.168.0.2)" 
                 <> "; ETH (etherType=2054)]" ) >>= \x -> x `shouldBe` Pass    
