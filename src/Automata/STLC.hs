@@ -23,6 +23,7 @@ import Data.List
 import qualified Data.Text as T
 import FieldClasses (PrintMode)
 import RecordTypes
+import qualified Data.Map.Strict as Map
 
 
 lexChar :: Char -> Parser Char 
@@ -36,9 +37,18 @@ data Expr
     = Var Sym
     | App Expr Expr
     | Lam Sym Type Expr
-    | LitIntegral Int 
+    | Lit Lit 
+    | PrimF1 PrimFunc Expr 
+    | PrimF2 PrimFunc Expr Expr
+    | PrimF3 PrimFunc Expr Expr Expr 
+    | PrimF4 PrimFunc Expr Expr Expr Expr 
+    | PrimF5 PrimFunc Expr Expr Expr Expr Expr  
+    | List [Expr]
+    | Pred (Predicate' Expr) deriving (Show, Eq)
+
+data Lit 
+  =   LitIntegral Int 
     | LitPType T.Text 
-    | LitMabInt (Maybe Int)
     | LitPMode PrintMode 
     | LitWMode F.WriteMode
     | LitQString T.Text 
@@ -49,7 +59,7 @@ data Expr
     | LitFType T.Text 
     | LitFSelExp FieldSelectorExp
     | LitPSelExp ProtocolSelectorExp
-    | LitMachine F.PacketMachine 
+    | LitMachine 
     | LitTime Int 
     | LitCase (ProtocolSelectorExp, F.MachineArrow T.Text)
     | LitDouble Double
@@ -59,60 +69,60 @@ data Expr
     | LitPcapHandle ()
     | LitDumpHandle ()
     | LitDisplayChan ()
-    | LitSource F.PacketSrc 
+    | LitSource 
     | LitMArr (F.MachineArrow T.Text)
-    | LitField Field
-    | PrimF PrimFunc Expr ()
-    | List [Expr]
-    | Pred (Predicate' Expr)
+    | LitField Field deriving (Show, Eq)
 
 
 type Body = Expr 
 
 data PrimFunc 
-  = SELECT
-  | DISCARD  
-  | MAKERANDOM 
-  | PRETTYPRINT 
-  | PRINTFIELD 
-  | WRITEFIELD 
-  | POP 
-  | PUSH 
-  | EXTRACT 
-  | CUT 
-  | PULL 
-  | LIFT
-  | SET 
-  | CHECKSUM 
-  | MODIFYOPT
-  | INSERTOPT 
-  | DELETEOPT 
-  | ALERT 
-  | VOID 
-  | REPORT 
-  | CREATE 
-  | COUNT 
-  | BUFFER 
-  | DUMP 
-  | UNTIL 
-  | UNLESS 
-  | WHEN 
-  | AFTER 
-  | SWITCH 
-  | COUNTSWITCH 
-  | TIMESWITCH 
-  | CASE 
-  | LISTENFOR 
-  | LIMIT 
-  | GENERATE_S 
-  | GENRANDOM_S 
-  | WHY_S 
-  | TEA_S 
-  | LISTEN_S 
-  | READPCAP_S 
+  = MK_SELECT
+  | MK_DISCARD  
+  | MK_MAKERANDOM 
+  | MK_PRETTYPRINT 
+  | MK_PRINTFIELD 
+  | MK_WRITEFIELD 
+  | MK_POP 
+  | MK_PUSH 
+  | MK_EXTRACT 
+  | MK_CUT 
+  | MK_PULL 
+  | MK_LIFT
+  | MK_SET 
+  | MK_CHECKSUM 
+  | MK_MODIFYOPT
+  | MK_INSERTOPT 
+  | MK_DELETEOPT 
+  | MK_ALERT 
+  | MK_VOID 
+  | MK_REPORT 
+  | MK_CREATE 
+  | MK_COUNT 
+  | MK_BUFFER 
+  | MK_DUMP 
+  | MK_UNTIL 
+  | MK_UNLESS 
+  | MK_WHEN 
+  | MK_AFTER 
+  | MK_SWITCH 
+  | MK_COUNTSWITCH 
+  | MK_TIMESWITCH 
+  | MK_CASE 
+  | MK_LISTENFOR 
+  | MK_LIMIT 
+  | MK_GENERATE_S 
+  | MK_GENRANDOM_S 
+  | MK_WHY_S 
+  | MK_MK_TEA_S 
+  | MK_LISTEN_S 
+  | MK_READPCAP_S
+  | PLUS
+  | MINUS 
+  | TIMES deriving (Show, Eq)
 
-
-
+selectPF :: Expr 
+selectPF = Lam "x" (Arrow PSelExpT MachineT) (App (Var "x") (PrimF1 MK_SELECT (Var "y")) )
 
 
 data Type 
@@ -121,7 +131,8 @@ data Type
   |  ProtoT 
   |  PModeT 
   |  WModeT 
-  |  QStringT 
+  |  QStringT
+  |  OpStringsT 
   |  FPathT
   |  PSelExpT 
   |  ProtoBuilderT 
@@ -142,6 +153,12 @@ data Type
   |  MArrT 
   |  ListT 
   |  PredT 
+  |  PrimF1T
+  |  PrimF2T
+  |  PrimF3T
+  |  PrimF4T
+  |  PrimF5T
+  |  FieldT
     deriving (Eq, Read, Show)
 
 
@@ -161,73 +178,71 @@ varExpr = lexeme $ try $ do
 pSelExpr :: Parser TypedExpr
 pSelExpr = lexeme $ try $ do
     sel <- protocolSelectorExp
-    return $ (PSelExpT,LitPSelExp sel)
+    return $ (PSelExpT,Lit $ LitPSelExp sel)
 
 intExpr :: Parser TypedExpr 
-intExpr = (\x -> (IntT, LitIntegral x )) <$> int 
+intExpr = (\x -> (IntT, Lit $ LitIntegral x )) <$> int 
 
 ptypeExpr :: Parser TypedExpr
-ptypeExpr = typedExpr protocolType ProtoT LitPType 
+ptypeExpr = typedExpr protocolType ProtoT (Lit . LitPType) 
 
 pModeExpr :: Parser TypedExpr
-pModeExpr = typedExpr ppMode PModeT LitPMode 
+pModeExpr = typedExpr ppMode PModeT (Lit . LitPMode) 
 
 wModeExpr :: Parser TypedExpr 
-wModeExpr = typedExpr writeMode WModeT LitWMode
+wModeExpr = typedExpr writeMode WModeT (Lit . LitWMode)
 
 qStringExpr :: Parser TypedExpr
-qStringExpr = typedExpr quotedString QStringT LitQString
+qStringExpr = typedExpr quotedString QStringT (Lit . LitQString)
 
 fPathExpr :: Parser TypedExpr
-fPathExpr = typedExpr filePath FPathT LitFPath 
+fPathExpr = typedExpr filePath FPathT (Lit . LitFPath) 
 
 pSelXPExpr :: Parser TypedExpr 
-pSelXPExpr = typedExpr protocolSelectorExp PSelExpT LitPSelExp
+pSelXPExpr = typedExpr protocolSelectorExp PSelExpT (Lit . LitPSelExp)
 
 protoBuilderExpr :: Parser TypedExpr 
-protoBuilderExpr = typedExpr protocolBuilder ProtoBuilderT LitPBuilder 
+protoBuilderExpr = typedExpr protocolBuilder ProtoBuilderT (Lit . LitPBuilder) 
 
 fBuilderExpr :: Parser TypedExpr 
-fBuilderExpr = typedExpr fieldBuilder FBuilderT LitFBuilder 
+fBuilderExpr = typedExpr fieldBuilder FBuilderT (Lit . LitFBuilder) 
 
 fTypeExpr :: Parser TypedExpr 
-fTypeExpr = typedExpr aWord FTypeT LitFType 
+fTypeExpr = typedExpr aWord FTypeT (Lit . LitFType) 
 
 fSelXPExpr :: Parser TypedExpr 
-fSelXPExpr = typedExpr fieldSelectorExp FSelExpT LitFSelExp 
+fSelXPExpr = typedExpr fieldSelectorExp FSelExpT (Lit . LitFSelExp) 
 
 msgSelXPExpr :: Parser TypedExpr
-msgSelXPExpr = typedExpr msgSelectorExp MsgSelExpT LitMsgSelExp
+msgSelXPExpr = typedExpr msgSelectorExp MsgSelExpT (Lit . LitMsgSelExp)
 
 timeExpr :: Parser TypedExpr
-timeExpr = typedExpr int TimeT LitTime 
+timeExpr = typedExpr int TimeT (Lit . LitTime) 
 
 caseExpr :: Parser TypedExpr
-caseExpr = typedExpr caseParser CaseT LitCase 
+caseExpr = typedExpr caseParser CaseT (Lit . LitCase) 
 
 doubleExpr :: Parser TypedExpr
-doubleExpr = typedExpr double DoubleT LitDouble 
+doubleExpr = typedExpr double DoubleT (Lit . LitDouble) 
 
 msgSelXPPlsExpr :: Parser TypedExpr
-msgSelXPPlsExpr = typedExpr msgSelectorExpPlus MsgSelExpPlusT LitMsgSelExpPlus
+msgSelXPPlsExpr = typedExpr msgSelectorExpPlus MsgSelExpPlusT (Lit . LitMsgSelExpPlus)
 
 pcapLockExpr :: Parser TypedExpr
-pcapLockExpr = typedExpr (return ()) PcapLockT LitPcapLock
+pcapLockExpr = typedExpr (return ()) PcapLockT (Lit . LitPcapLock)
 
 pcapHdlExpr :: Parser TypedExpr
-pcapHdlExpr = typedExpr (return ()) PcapHandleT LitPcapHandle 
+pcapHdlExpr = typedExpr (return ()) PcapHandleT (Lit . LitPcapHandle) 
 
 dumpHdlExpr :: Parser TypedExpr
-dumpHdlExpr = typedExpr (return ()) DumpHandleT LitDumpHandle
+dumpHdlExpr = typedExpr (return ()) DumpHandleT (Lit . LitDumpHandle)
 
 displayChanExpr :: Parser TypedExpr
-displayChanExpr = typedExpr (return ()) DisplayChanT LitDisplayChan
+displayChanExpr = typedExpr (return ()) DisplayChanT (Lit . LitDisplayChan)
 
-sourceExpr :: Parser TypedExpr
-sourceExpr = typedExpr (return ()) SourceT LitSource 
 
 marrExpr :: Parser TypedExpr 
-marrExpr = typedExpr machineArrParens MArrT LitMArr 
+marrExpr = typedExpr machineArrParens MArrT (Lit . LitMArr) 
 
 
 -- casesExpr = typedExpr caseParser CasesT LitCases 
@@ -242,7 +257,7 @@ marrExpr = typedExpr machineArrParens MArrT LitMArr
 
 
 -- Evaluator 
-type Env = Map Sym Value
+type Env = Map.Map Sym Value
 
 
 
@@ -345,6 +360,38 @@ tCheck r (Lam s t e) = do
     te <- tCheck r' e
     return $ Arrow t te
 
+tCheck r (Lit x) = case x of
+  LitIntegral _ -> Right IntT 
+  LitPType _    -> Right ProtoT
+  LitPMode _    -> Right PModeT 
+  LitWMode _    -> Right WModeT
+  LitQString _  -> Right QStringT
+  LitOptString _ -> Right OpStringsT 
+  LitPBuilder _  -> Right ProtoBuilderT 
+  LitFPath _     -> Right FPathT 
+  LitFBuilder _  -> Right FBuilderT
+  LitFType _     -> Right FTypeT
+  LitFSelExp _   -> Right FSelExpT 
+  LitPSelExp _   -> Right PSelExpT 
+  LitMachine     -> Right MachineT 
+  LitTime _      -> Right TimeT 
+  LitCase _      -> Right CaseT 
+  LitDouble _    -> Right DoubleT 
+  LitMsgSelExpPlus _ -> Right MsgSelExpPlusT
+  LitMsgSelExp _     -> Right MsgSelExpT
+  LitPcapLock ()     -> Right PcapLockT 
+  LitPcapHandle ()   -> Right PcapHandleT 
+  LitDumpHandle ()   -> Right DumpHandleT
+  LitDisplayChan ()  -> Right DisplayChanT
+  LitSource          -> Right SourceT 
+  LitMArr   _        -> Right MArrT 
+  LitField _         -> Right FieldT
+
+tCheck _ (PrimF1 _ _) = Right PrimF1T 
+tCheck _ (PrimF2 _ _ _) = Right PrimF2T
+tCheck _ (PrimF3 _ _ _ _) = Right PrimF3T
+tCheck _ (PrimF4 _ _ _ _ _) = Right PrimF4T
+tCheck _ (PrimF5 _ _ _ _ _ _) = Right PrimF5T    
 typeCheck :: Expr -> Either ErrorMsg Type
 typeCheck e =
     case tCheck initialEnv e of
