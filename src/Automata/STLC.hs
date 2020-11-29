@@ -1,8 +1,10 @@
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
-
+{-# LANGUAGE TemplateHaskell#-}
 -- Simply Typed Lambda Calculus --
 module STLC where 
 
+import Control.Lens hiding (List)
 import Control.Monad 
 import qualified FactoryTypes as F
 import Control.Monad.Trans.Class 
@@ -26,6 +28,13 @@ import RecordTypes
 import qualified Data.Map.Strict as Map
 
 
+-- We want: Type inference, variable binding, closures, environment
+
+-- We DO NOT WANT: Recursion, polymorphism. 
+
+-- Solution: "Neutered" simply typed lambda calculus. 
+
+
 lexChar :: Char -> Parser Char 
 lexChar = lexeme . char 
 
@@ -37,46 +46,46 @@ data Expr
     = Var Sym
     | App Expr Expr
     | Lam Sym Type Expr
-    | Lit Lit 
-    | PrimF1 PrimFunc Expr 
-    | PrimF2 PrimFunc Expr Expr
-    | PrimF3 PrimFunc Expr Expr Expr 
-    | PrimF4 PrimFunc Expr Expr Expr Expr 
-    | PrimF5 PrimFunc Expr Expr Expr Expr Expr  
+    | Lit Lit
     | List [Expr]
-    | Pred (Predicate' Expr) deriving (Show, Eq)
+    | FieldBuilder' Expr Expr
+    | MchBldr MchBldr Expr 
+      deriving (Show, Eq)
 
 data Lit 
-  =   LitIntegral Int 
+  =   LitInt Int 
+    | LitBool Bool 
     | LitPType T.Text 
     | LitPMode PrintMode 
     | LitWMode F.WriteMode
     | LitQString T.Text 
     | LitOptString [T.Text]
-    | LitPBuilder ProtocolBuilder 
     | LitFPath FilePath
-    | LitFBuilder FieldBuilder
     | LitFType T.Text 
-    | LitFSelExp FieldSelectorExp
-    | LitPSelExp ProtocolSelectorExp
-    | LitMachine 
-    | LitTime Int 
     | LitCase (ProtocolSelectorExp, F.MachineArrow T.Text)
     | LitDouble Double
-    | LitMsgSelExpPlus MsgSelectorExp
-    | LitMsgSelExp MsgSelectorExp
-    | LitPcapLock ()
-    | LitPcapHandle ()
-    | LitDumpHandle ()
-    | LitDisplayChan ()
-    | LitSource 
-    | LitMArr (F.MachineArrow T.Text)
     | LitField Field deriving (Show, Eq)
+
+type Env = Map.Map Sym Val
+
+(|$) :: Expr -> Expr -> Expr 
+a |$ b = App a b 
+
+nil :: Expr
+nil = List []
+
+
+
+data Val 
+  = ValMachine F.PacketMachine
+  | ValSource F.PacketSrc 
+  | ValFactory F.Factory 
+  | ValClosure  Expr Env 
 
 
 type Body = Expr 
 
-data PrimFunc 
+data MchBldr
   = MK_SELECT
   | MK_DISCARD  
   | MK_MAKERANDOM 
@@ -121,12 +130,12 @@ data PrimFunc
   | MINUS 
   | TIMES deriving (Show, Eq)
 
-selectPF :: Expr 
-selectPF = Lam "x" (Arrow PSelExpT MachineT) (App (Var "x") (PrimF1 MK_SELECT (Var "y")) )
+ 
 
 
 data Type 
-  =  Arrow Type Type
+  =  Type :->: Type
+  |  BoolT 
   |  IntT 
   |  ProtoT 
   |  PModeT 
@@ -145,22 +154,32 @@ data Type
   |  CaseT 
   |  DoubleT 
   |  MsgSelExpPlusT
-  |  PcapLockT 
-  |  PcapHandleT 
-  |  DumpHandleT 
-  |  DisplayChanT
   |  SourceT 
   |  MArrT 
+  |  TupleT Type Type 
   |  ListT 
-  |  PredT 
-  |  PrimF1T
-  |  PrimF2T
-  |  PrimF3T
-  |  PrimF4T
-  |  PrimF5T
+  |  PredT Type 
   |  FieldT
+  |  UnitT
     deriving (Eq, Read, Show)
 
+
+
+
+data Def = Def Sym Expr 
+
+-- \select -> \x -> MK_SELECT x
+
+
+
+mkSelect :: Expr  
+mkSelect = Lam "x" (PSelExpT) 
+              (MchBldr MK_SELECT (Var "x"))
+
+
+mkFieldBuilder :: Expr 
+mkFieldBuilder = Lam "ostrs" OpStringsT 
+                  $ Lam "field" FieldT (FieldBuilder' (Var "ostrs") (Var "field")) 
 
 type TypedExpr = (Type,Expr)
 
@@ -175,13 +194,7 @@ varExpr = lexeme $ try $ do
   sym <- between (lexChar '(') (lexChar ')') $ some (letterChar <|> digitChar)
   return $ Var . T.pack $ sym 
 
-pSelExpr :: Parser TypedExpr
-pSelExpr = lexeme $ try $ do
-    sel <- protocolSelectorExp
-    return $ (PSelExpT,Lit $ LitPSelExp sel)
 
-intExpr :: Parser TypedExpr 
-intExpr = (\x -> (IntT, Lit $ LitIntegral x )) <$> int 
 
 ptypeExpr :: Parser TypedExpr
 ptypeExpr = typedExpr protocolType ProtoT (Lit . LitPType) 
@@ -198,78 +211,20 @@ qStringExpr = typedExpr quotedString QStringT (Lit . LitQString)
 fPathExpr :: Parser TypedExpr
 fPathExpr = typedExpr filePath FPathT (Lit . LitFPath) 
 
-pSelXPExpr :: Parser TypedExpr 
-pSelXPExpr = typedExpr protocolSelectorExp PSelExpT (Lit . LitPSelExp)
-
-protoBuilderExpr :: Parser TypedExpr 
-protoBuilderExpr = typedExpr protocolBuilder ProtoBuilderT (Lit . LitPBuilder) 
-
-fBuilderExpr :: Parser TypedExpr 
-fBuilderExpr = typedExpr fieldBuilder FBuilderT (Lit . LitFBuilder) 
-
 fTypeExpr :: Parser TypedExpr 
 fTypeExpr = typedExpr aWord FTypeT (Lit . LitFType) 
 
-fSelXPExpr :: Parser TypedExpr 
-fSelXPExpr = typedExpr fieldSelectorExp FSelExpT (Lit . LitFSelExp) 
 
-msgSelXPExpr :: Parser TypedExpr
-msgSelXPExpr = typedExpr msgSelectorExp MsgSelExpT (Lit . LitMsgSelExp)
 
-timeExpr :: Parser TypedExpr
-timeExpr = typedExpr int TimeT (Lit . LitTime) 
+
+
+
 
 caseExpr :: Parser TypedExpr
 caseExpr = typedExpr caseParser CaseT (Lit . LitCase) 
 
 doubleExpr :: Parser TypedExpr
 doubleExpr = typedExpr double DoubleT (Lit . LitDouble) 
-
-msgSelXPPlsExpr :: Parser TypedExpr
-msgSelXPPlsExpr = typedExpr msgSelectorExpPlus MsgSelExpPlusT (Lit . LitMsgSelExpPlus)
-
-pcapLockExpr :: Parser TypedExpr
-pcapLockExpr = typedExpr (return ()) PcapLockT (Lit . LitPcapLock)
-
-pcapHdlExpr :: Parser TypedExpr
-pcapHdlExpr = typedExpr (return ()) PcapHandleT (Lit . LitPcapHandle) 
-
-dumpHdlExpr :: Parser TypedExpr
-dumpHdlExpr = typedExpr (return ()) DumpHandleT (Lit . LitDumpHandle)
-
-displayChanExpr :: Parser TypedExpr
-displayChanExpr = typedExpr (return ()) DisplayChanT (Lit . LitDisplayChan)
-
-
-marrExpr :: Parser TypedExpr 
-marrExpr = typedExpr machineArrParens MArrT (Lit . LitMArr) 
-
-
--- casesExpr = typedExpr caseParser CasesT LitCases 
-
-
-
-
-
-
-
-
-
-
--- Evaluator 
-type Env = Map.Map Sym Value
-
-
-
-data Value 
-  = ValIO ()
-  | VClosure Expr Env 
-
-
-
-
-
-
 
 
 
@@ -350,7 +305,7 @@ tCheck r (Var s) =
 tCheck r (App f a) = do
     tf <- tCheck r f
     case tf of
-     Arrow at rt -> do
+     (at :->: rt) -> do
         ta <- tCheck r a
         when (ta /= at) $ Left "Bad function argument type"
         return rt
@@ -358,42 +313,38 @@ tCheck r (App f a) = do
 tCheck r (Lam s t e) = do
     let r' = extend s t r
     te <- tCheck r' e
-    return $ Arrow t te
+    return $ t :->: te 
 
 tCheck r (Lit x) = case x of
-  LitIntegral _ -> Right IntT 
-  LitPType _    -> Right ProtoT
-  LitPMode _    -> Right PModeT 
-  LitWMode _    -> Right WModeT
-  LitQString _  -> Right QStringT
+  LitInt   _     -> Right IntT 
+  LitPType _     -> Right ProtoT
+  LitPMode _     -> Right PModeT 
+  LitWMode _     -> Right WModeT
+  LitQString _   -> Right QStringT
   LitOptString _ -> Right OpStringsT 
-  LitPBuilder _  -> Right ProtoBuilderT 
   LitFPath _     -> Right FPathT 
-  LitFBuilder _  -> Right FBuilderT
   LitFType _     -> Right FTypeT
-  LitFSelExp _   -> Right FSelExpT 
-  LitPSelExp _   -> Right PSelExpT 
-  LitMachine     -> Right MachineT 
-  LitTime _      -> Right TimeT 
   LitCase _      -> Right CaseT 
   LitDouble _    -> Right DoubleT 
-  LitMsgSelExpPlus _ -> Right MsgSelExpPlusT
-  LitMsgSelExp _     -> Right MsgSelExpT
-  LitPcapLock ()     -> Right PcapLockT 
-  LitPcapHandle ()   -> Right PcapHandleT 
-  LitDumpHandle ()   -> Right DumpHandleT
-  LitDisplayChan ()  -> Right DisplayChanT
-  LitSource          -> Right SourceT 
-  LitMArr   _        -> Right MArrT 
-  LitField _         -> Right FieldT
+  LitField _     -> Right FieldT
 
-tCheck _ (PrimF1 _ _) = Right PrimF1T 
-tCheck _ (PrimF2 _ _ _) = Right PrimF2T
-tCheck _ (PrimF3 _ _ _ _) = Right PrimF3T
-tCheck _ (PrimF4 _ _ _ _ _) = Right PrimF4T
-tCheck _ (PrimF5 _ _ _ _ _ _) = Right PrimF5T    
-typeCheck :: Expr -> Either ErrorMsg Type
-typeCheck e =
-    case tCheck initialEnv e of
+tCheck r (MchBldr _ ex) = case tCheck r ex of
+  Right aType  -> Right $ MachineT
+  Left  err    -> Left err 
+
+tCheck r (FieldBuilder' os fl) = case (tCheck r os, tCheck r fl) of -- is this necessary?
+  (Right OpStringsT,Right FieldT) ->  Right FBuilderT 
+  _                               -> Left "Error! FieldBuilder expected <OPTICS STRINGS> <FIELD> but received something else!"
+
+typeCheck :: Expr -> TypeEnv -> Either ErrorMsg Type
+typeCheck expr env  =
+    case tCheck env expr of
     Left msg -> Left $ "Type error:\n" <> msg
     Right t -> Right t
+
+--}
+
+data DSLEnv = DSLEnv {_typeEnv :: TypeEnv 
+                     ,_exprEnv :: Env
+                     ,_valEnv  :: [Val]}
+makeLenses ''DSLEnv 
