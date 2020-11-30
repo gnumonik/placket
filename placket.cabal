@@ -97,7 +97,12 @@ library
       Randomizer
       PacketSources
       SourceParser
-      STLC
+  -- DSL Stuff (Simply Typed Lambda Calculus)
+      Syntax
+      Parse
+      Eval
+      Check
+      BaseDefs
 
 -- Misc/Tests
     --  Tests
@@ -119,7 +124,8 @@ library
     , src/TH
     , src/Protocols
     , src/PacketFuncs
-    , src/IO 
+    , src/IO
+    , src/Automata/DSL 
 
   build-depends:
       base >=4.7 && <5
