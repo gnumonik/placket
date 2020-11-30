@@ -196,6 +196,31 @@ data Type
   |  UnitT
     deriving (Eq, Read, Show)
 
+
+
+tShow :: Show a => a -> T.Text 
+tShow x= T.pack . show $ x  
+
+prettyType :: Type -> T.Text 
+prettyType t = case t of
+  PairT BinaryOpT (PairT OpStringsT FieldT) -> "FieldSelector"
+  PairT BinaryOpT (PairT OpStringsT OpStringsT) -> "FieldSelectorPlus"
+  PredT (PairT BinaryOpT (PairT OpStringsT FieldT)) -> "FieldSelectorExp"
+  PairT ProtoT ( PredT (PairT BinaryOpT (PairT OpStringsT FieldT))) -> "ProtocolSelector"
+  PredT (PairT ProtoT ( PredT (PairT BinaryOpT (PairT OpStringsT FieldT)))) -> 
+    "ProtocolSelectorExp"
+  YepT (PredT (PairT ProtoT ( PredT (PairT BinaryOpT (PairT OpStringsT FieldT))))) -> 
+    "MsgSelector"
+  ListT (YepT (PredT (PairT ProtoT ( PredT (PairT BinaryOpT (PairT OpStringsT FieldT)))))) -> "MsgSelectorExp"
+  PairT OpStringsT FieldT -> "FieldBuilder"
+  YepT (ListT (PairT OpStringsT FieldT)) -> "FieldBuilderExp"
+  PairT ProtoT (YepT (ListT (PairT OpStringsT FieldT))) -> "ProtocolBuilder"
+  YepT t     -> "Yep " <> tShow t 
+  PairT t1 t2 -> "(" <> tShow t1 <> "," <> tShow t2 <> ")"
+  ListT t      -> "[" <> tShow t <> "]"
+  PredT t      -> "Predicate " <> tShow t
+  t1 :->: t2   -> prettyType t1 <>  " -> " <> prettyType t2
+  x            -> tShow x 
 infixr 0 :->:
 
 rType :: Type -> Type 
@@ -215,7 +240,51 @@ data DSLEnv = DSLEnv {_typeEnv :: TypeEnv
                      ,_defEnv  :: Map.Map Sym Expr}
 makeLenses ''DSLEnv 
 
+prettyExpr :: Expr -> T.Text 
+prettyExpr e = "\n" <> (prettyLambda 0 e) <> "\n"
 
+prettyLambda :: Int -> Expr -> T.Text 
+prettyLambda n e =  case e of
+  (Var s)   -> s 
+  (f :$: a) -> prettyLambda n f <> " $ " <> prettyLambda n a 
+  (Lam i t e ) ->  "\\" 
+               <> i <> "::" <> (T.pack . show $ t)
+               <> " -> \n" 
+               <>   T.concat  (replicate (n + 1)  "      ") <> prettyLambda (n+1) e
+  Unit         -> "()"
+  Lit x        -> prettyLit x 
+  Yep x        -> "Yep " <> prettyLambda n x
+  Nope t       -> "Nope::" <> (T.pack . show $ t )
+  Nil t        -> "[]::"  <> (T.pack . show $ t )
+  Pair ex1 ex2 -> "(" <> prettyLambda n ex1 <> "," <> prettyLambda n ex2 <> ")"
+  MchBldr m x  -> 
+    "Machine Builder (" <> (T.pack . show $ m) <> ") " <> prettyLambda n x    
+  Cons x1 x2   -> prettyList 0 (Cons x1 x2)
+ where
+
+    prettyLit :: Lit -> T.Text 
+    prettyLit l = case l of
+     LitInt  n      -> T.pack . show $ n 
+     LitBool b      -> T.pack . show $ b 
+     LitPType p     -> p 
+     LitWMode w     -> T.pack . show $ w 
+     LitQString q   -> q 
+     LitOptString o -> 
+       foldr (\x acc -> if T.null acc then x <> "" else x <> "." <> acc) "" o 
+     LitFPath f     -> T.pack . show $ f
+     LitDouble d    -> T.pack . show $ d
+     LitField f     -> T.pack . show $ f 
+
+    prettyList :: Int -> Expr -> T.Text 
+    prettyList n l = "[" <> (go n l)
+      where
+        go :: Int -> Expr -> T.Text
+        go _ (Nil t) = "]::" <> (T.pack . show $ t)
+        go n (Cons x1 (Nil t)) = prettyLambda n x1 <> go n(Nil t)
+        go n (Cons x xs ) = prettyLambda n x <> " , " <> go n xs  
+
+    
+  
 
 
 whnf :: Expr -> Expr
@@ -225,10 +294,16 @@ whnf ee = spine ee []
         spine f as = foldl (:$:) f as
 
 freeVars :: Expr -> [Sym]
-freeVars (Var s) = [s]
-freeVars (f :$: a) = freeVars f `union` freeVars a
-freeVars (Lam i t e) = freeVars e \\ [i]
-
+freeVars (Var s)       = [s]
+freeVars (f :$: a)     = freeVars f `union` freeVars a
+freeVars (Lam i t e)   = freeVars e \\ [i]
+freeVars Unit          = []
+freeVars (Lit _)       = []
+freeVars (Yep x)       = freeVars x 
+freeVars (Nope t)      = []
+freeVars (Nil t)       = []
+freeVars (MchBldr _ x) = freeVars x
+freeVars (Cons x1 x2)  = freeVars x1 <> freeVars x2  
 subst :: Sym -> Expr -> Expr -> Expr
 subst v x b = sub b
   where

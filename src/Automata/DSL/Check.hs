@@ -8,6 +8,16 @@ import Syntax
 import qualified Data.Text as T 
 import Control.Monad 
 
+
+prettyDef :: Def -> T.Text 
+prettyDef (Def nm vars exp) = case tCheck initialEnv exp of
+  Right r -> 
+   "\n" <>  nm <> " :: " <> prettyType r <> "\n"
+  <> nm <> " " <> (T.concat . map (<> " ") $ vars )
+  <> " = \n  "
+  <> prettyLambda 1 exp
+  <> "\n\n"
+
 tCheck :: TypeEnv -> Expr -> TC Type
 tCheck r (Var s) =
     findVar r s
