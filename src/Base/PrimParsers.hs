@@ -373,7 +373,7 @@ alwaysFail = lexeme $ try $ do
 
 quotedString :: Parser T.Text
 quotedString = lexeme $ try $ do
-    (void $ char '"') <?> "Error: Expecting a string enclosed by quotes, but there is no initial quotation mark."
+    (void $ char '"') <?> "a string enclosed by quotes, but there is no initial quotation mark."
     body <- manyTill (satisfy $ \x -> x /= '"') (lookAhead $ char '"')
-    (void $ char '"') <?> "Error: Expecting a string enclosed by quotes, but there is no ending quotation mark."
+    (void $ char '"') <?> "a string enclosed by quotes, but there is no ending quotation mark."
     return $! T.pack body 

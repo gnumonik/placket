@@ -45,7 +45,8 @@ tCheck r (Lit x) = case x of
   LitFType _     -> Right FTypeT
   LitDouble _    -> Right DoubleT 
   LitField _     -> Right FieldT
-  LitBool _      -> Right BoolT 
+  LitBool _      -> Right BoolT
+  LitSWMode _    -> Right SWModeT
 
 tCheck r (Yep ex1) = case tCheck r ex1 of
   Right t  -> Right $ YepT t
@@ -95,6 +96,52 @@ tCheck r (MchBldr _ ex) = case tCheck r ex of
 
 tCheck _ Unit = Right UnitT 
 
+tCheck r (Unary o x) = case o of
+  BOOL_ATOM -> case tCheck r x of
+    Right t  -> Right $ PredT t
+    Left err -> Left err  
+
+  BOOL_NOT-> case tCheck r x of
+    Right t  -> Right $ PredT t
+    Left err -> Left err  
+
+tCheck r (Binary o x1 x2) = case o of
+  COMP_EQ    -> goComp r x1 x2 
+  COMP_NOTEQ -> goComp r x1 x2 
+  COMP_GT    -> goComp r x1 x2 
+  COMP_GTE   -> goComp r x1 x2 
+  COMP_LT    -> goComp r x1 x2 
+  COMP_LTE   -> goComp r x1 x2 
+
+  ARITH_PLUS  -> goArith r x1 x2 
+  ARITH_MINUS -> goArith r x1 x2 
+  ARITH_TIMES -> goArith r x1 x2 
+  ARITH_DIV   -> goArith r x1 x2 
+
+  BOOL_OR     -> goPred r x1 x2
+  BOOL_AND    -> goPred r x1 x2 
+ where
+
+   goComp r' x1' x2' = case mapM (tCheck r') [x1',x2'] of
+     Right _ -> Right BoolT
+     Left err     -> Left err 
+
+   goArith r' x1' x2' = case mapM (tCheck r') [x1',x2'] of
+     Right _      -> Right IntT
+     Left err     -> Left err
+
+   goPred r' x1' x2' = case mapM (tCheck r') [x1',x2'] of
+     Right [t,t'] -> if t == t' 
+                        then Right $ PredT t
+                        else Left $ "Error! Type mismatch in expression:\n"
+                                  <> (prettyExpr x1' <> tShow o <> prettyExpr x2')
+                                  <> "\nCouldn't match type " 
+                                  <> prettyType t
+                                  <> " with type "
+                                  <> prettyType t'
+     Left err     -> Left err 
+     Right _ -> Left "Error! Impossible type." 
+ 
 
 typeCheck :: Expr -> TypeEnv -> Either ErrorMsg Type
 typeCheck expr env  =

@@ -5,45 +5,125 @@
 module BaseDefs where
 
 import Syntax
+import Data.Map (Map)
+import qualified Data.Map as Map 
 import qualified Data.Text as T 
 
 
--- Composite Types 
+-- Composite Types
+
+initEnv :: LambdaEnv 
+initEnv = LambdaEnv 
+
+casesT :: Type
+casesT = ListT (PairT pSelExpT MachineT )
+
+adts :: Map T.Text Type
+adts = Map.fromList . map go 
+      $ [fSelT
+        ,fSelPlusT 
+        ,fSelExpT
+        ,pSelT
+        ,pSelExpT
+        ,mSelT 
+        ,mSelExpT
+        ,fBuilderT
+        ,fBuilderExpT 
+        ,pBuilderT]
+
+
+baseTypes :: [(T.Text, Type)]
+baseTypes = [ ("Bool",BoolT)
+        , ("Int",IntT)
+        , ("PType",ProtoT)
+        , ("PMode", PModeT)
+        , ("WMode",WModeT) 
+        , ("QString", QStringT)
+        , ("OpStrings",OpStringsT)
+        , ("SWMode",SWModeT)
+        , ("FPath",FPathT)
+        , ("FType",FTypeT)
+        , ("Machine",MachineT)
+        , ("Double",DoubleT)
+        , ("Source", SourceT)
+        , ("Field", FieldT)
+        , ("()"   , UnitT)]
+
 fSelT :: Type
-fSelT = PairT BinaryOpT (PairT OpStringsT FieldT)
+fSelT = ADT "FieldSelector" $ PairT BinaryOpT (PairT OpStringsT FieldT)
 
 fSelPlusT :: Type
-fSelPlusT = PairT BinaryOpT (PairT OpStringsT OpStringsT)
+fSelPlusT = ADT "FieldReference" $ PairT BinaryOpT (PairT OpStringsT OpStringsT)
 
 fSelExpT :: Type
-fSelExpT = PredT fSelT 
+fSelExpT = ADT "Predicate FieldSelector" $ PredT fSelT 
 
 pSelT :: Type
-pSelT = PairT ProtoT fSelExpT 
+pSelT = ADT "ProtocolSelector" $ PairT ProtoT fSelExpT 
 
 pSelExpT :: Type 
-pSelExpT = PredT pSelT 
+pSelExpT = ADT "Predicate ProtocolSelector" $ PredT pSelT 
 
 mSelT :: Type 
-mSelT = YepT pSelT 
+mSelT = ADT "ProtocolSelector" $ YepT pSelT 
 
 mSelExpT :: Type
-mSelExpT = ListT pSelT 
+mSelExpT = ADT "[ProtocolSelector]" $ ListT pSelT 
 
 fBuilderT :: Type
-fBuilderT = PairT OpStringsT FieldT 
+fBuilderT = ADT "FieldBuilder" $ PairT OpStringsT FieldT 
 
 fBuilderExpT :: Type 
-fBuilderExpT = YepT (ListT fBuilderT)
+fBuilderExpT = ADT "FieldBuilders" $ YepT (ListT fBuilderT)
 
 pBuilderT :: Type
-pBuilderT = PairT ProtoT fBuilderExpT 
+pBuilderT = ADT "ProtocolBuilder" $ PairT ProtoT fBuilderExpT 
 
+-- Utility function
 
 unDef :: Def -> Expr
 unDef (Def _ _ x) = x 
 
+-- Base Defs
 
+defToMap :: [Def] -> Map T.Text Expr 
+defToMap d = Map.fromList $ map go d
+  where
+    go (Def n _ e) = (n,e)
+
+defMap :: Map T.Text Expr
+defMap = defToMap baseDefs 
+
+baseDefs :: [Def]
+baseDefs = [mkPPrint 
+         , mkPrintField
+         , mkWriteField
+         , mkPop
+         , mkPull 
+         , mkExtract 
+         , mkCut 
+         , mkPush 
+         , mkLift 
+         , mkSet 
+         , mkChecksum 
+         , mkModifyOpt 
+         , mkInsertOpt 
+         , mkDeleteOpt
+         , mkSelect
+         , mkDiscard
+         , mkAlert
+         , mkVoid
+         , mkReport
+         , mkCreate
+         , mkCount
+         , mkBuffer 
+         , mkUntil
+         , mkUnless
+         , mkWhen
+         , mkAfter 
+         , mkSwitch 
+         , mkTimeSwitch
+         , mkCase]
 
 
 mkProtoBuilder :: Expr
@@ -62,10 +142,7 @@ mkFieldBuilder = Lam "ostrs" OpStringsT
                         (Pair (Var "ostrs") (Var "field")) 
 
 
-mkSelect :: Def 
-mkSelect = Def "select" ["pSel"] $ 
-              Lam "pSel" pSelT  
-               (MchBldr MK_SELECT (Var "pSel"))
+
 
 mkPPrint :: Def 
 mkPPrint = 
@@ -139,3 +216,183 @@ mkModifyOpt =
             (Pair  (Var "fType")
               (Pair  (Var "fSelExp") 
                  (Var "fBuilder") ))
+mkInsertOpt :: Def
+mkInsertOpt = 
+  let p  = "p"
+      f  = "f"
+      fs = "fs"
+  in Def "insertOpt" [p,f,fs]
+       $ Lam p ProtoT
+         $ Lam f FTypeT
+           $ Lam fs (ListT fBuilderT)
+              $ MchBldr MK_INSERTOPT
+                $ Pair (Var p) 
+                  $ Pair (Var f) (Var fs)
+
+mkDeleteOpt :: Def
+mkDeleteOpt =
+  let p = "p"
+      f = "f"
+  in Def "deleteOpt" [p,f]
+      $ Lam p ProtoT
+        $ Lam f FTypeT
+          $ MchBldr MK_DELETEOPT (Pair (Var p) (Var f))
+
+
+mkSelect :: Def 
+mkSelect = Def "select" ["pSel"] $ 
+              Lam "pSel" pSelT  
+               (MchBldr MK_SELECT (Var "pSel"))
+
+mkDiscard :: Def 
+mkDiscard = Def "discard" ["pSel"] $ 
+              Lam "pSel" pSelT  
+               (MchBldr MK_DISCARD (Var "pSel"))
+
+mkAlert :: Def
+mkAlert = 
+  let q = "qString"
+      p = "pSel"
+  in Def "alert" [q,p] $ 
+      Lam q QStringT $
+        Lam p pSelT $ 
+          (MchBldr MK_ALERT $ Pair (Var q) (Var p))
+
+mkVoid :: Def 
+mkVoid = Def "void" [] $ MchBldr MK_VOID Unit 
+
+mkReport :: Def
+mkReport 
+  = let q = "q"
+    in Def "report" [q]
+        $ Lam q QStringT 
+          $ MchBldr MK_REPORT (Var q)
+
+mkCreate :: Def
+mkCreate = 
+  let w = "w"
+      r = "d"
+      b = "b"
+  in 
+    Def "create" [w,r,b] $  
+    Lam w IntT 
+      $ Lam r IntT 
+        $ Lam b (ListT pBuilderT)
+          $ MchBldr MK_CREATE
+            $ Pair (Var w)
+              $ Pair (Var r) (Var b)
+
+mkCount :: Def
+mkCount = 
+  let i = "i"
+  in Def "count" [i] 
+      $ Lam i IntT 
+        $ MchBldr MK_COUNT (Var i)
+
+mkBuffer :: Def
+mkBuffer =
+  let i = "i"
+  in Def "buffer" [i]
+      $ Lam i IntT 
+        $ MchBldr MK_BUFFER (Var i)
+
+mkDump :: Def
+mkDump = 
+  let f = "f"
+      i = "i"
+  in Def "dump" [f,i]
+      $ Lam "f" FPathT
+        $ Lam i IntT 
+          $ MchBldr MK_DUMP (Pair (Var f) (Var i))
+
+mkUntil :: Def
+mkUntil = 
+  let p = "p"
+      m = "m"
+  in 
+    Def "until" [p,m]
+      $ Lam p pSelExpT 
+        $ Lam m MachineT
+          $ MchBldr MK_UNTIL (Pair (Var p) (Var m))
+
+mkUnless :: Def
+mkUnless = 
+  let p = "p"
+      m = "m"
+  in 
+    Def "unless" [p,m]
+      $ Lam p pSelExpT 
+        $ Lam m MachineT
+          $ MchBldr MK_UNLESS (Pair (Var p) (Var m))
+
+mkWhen :: Def
+mkWhen = 
+  let p = "p"
+      m = "m"
+  in 
+    Def "when" [p,m]
+      $ Lam p pSelExpT 
+        $ Lam m MachineT
+          $ MchBldr MK_WHEN (Pair (Var p) (Var m))
+
+
+mkAfter :: Def
+mkAfter = 
+  let p = "p"
+      m = "m"
+  in 
+    Def "after" [p,m]
+      $ Lam p pSelExpT 
+        $ Lam m MachineT
+          $ MchBldr MK_AFTER(Pair (Var p) (Var m))
+
+mkSwitch :: Def
+mkSwitch = 
+  let m = "m"
+      p = "p"
+      mch1 = "mch1"
+      mch2 = "mch2"
+  in 
+    Def "switch" [m,p,mch1,mch2]
+      $ Lam m SWModeT
+        $ Lam p PModeT 
+          $ Lam mch1 MachineT
+            $ Lam mch2 MachineT
+              $ MchBldr MK_SWITCH 
+                $ Pair (Var m)
+                  $ Pair (Var p)
+                    $ Pair (Var mch1) (Var mch2)
+
+mkTimeSwitch :: Def
+mkTimeSwitch = 
+  let t  = "t"
+      m1 = "m1 " 
+      m2 = "m2"
+  in Def "timeSwitch" [t,m1,m2]
+      $ Lam t IntT 
+        $ Lam m1 MachineT
+          $ Lam m2 MachineT
+            $ MchBldr MK_TIMESWITCH 
+              $ Pair (Var t)
+                $ Pair (Var m1) (Var m2)
+
+mkCase :: Def
+mkCase = 
+  let cs = "cs"
+  in Def "case" [cs]
+       $ Lam cs casesT 
+         $ MchBldr MK_CASE (Var cs)
+
+
+{--
+mkListenFor :: Def
+mkListenFor = 
+  let mplus = "m"
+      d     = "d"
+      maxTO = "t"
+      mult  = "mult"
+      mArg  = "mch"
+  in Def "listenFor" [mplus,d,maxTO,mult,mArg]
+        $ Lam mplus msgSel
+--} 
+-- Figure out how to represent msgSel+ later 

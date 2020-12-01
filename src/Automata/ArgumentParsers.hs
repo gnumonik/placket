@@ -15,6 +15,16 @@ import PacketFilters ( apFilter, mkCompare )
 import RecordTypes
 import qualified Data.Vector as V
 
+bool :: Parser Bool
+bool = true <|> false 
+  where
+    true = lexeme $ try $ do
+      void . lexeme $ string "True"
+      return True 
+
+    false = lexeme $ try $ do
+      void . lexeme $ string "False"
+      return False 
 
 prefix :: T.Text -> Maybe a ->  Parser a -> Parser a
 prefix str a p = case a of
@@ -26,7 +36,7 @@ prefix str a p = case a of
     p
 
 switchMode :: Parser SwitchMode
-switchMode = option Blow (reset <|> blow)
+switchMode = reset <|> blow
   where
     reset = lexeme $ try $ do
       void . lexeme $ string "reset"

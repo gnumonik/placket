@@ -26,6 +26,8 @@ import qualified Data.Text as T
 import FieldClasses (PrintMode)
 import RecordTypes
 import qualified Data.Map.Strict as Map
+import Control.Monad.Reader
+import Control.Monad 
 
 
 {--    | Atom Expr 
@@ -72,8 +74,8 @@ data Expr
     | Yep Expr -- "Just x"
     | Nope Type  -- "Nothing"
     | Pair Expr Expr -- (x,y)
-    | Unary UnOp 
-    | Binary BinOp 
+    | Unary UnOp Expr 
+    | Binary BinOp Expr Expr 
     | MchBldr MchBldr Expr
     | Unit 
       deriving (Show, Eq)
@@ -97,14 +99,15 @@ data BinOp
   | ARITH_TIMES 
   | ARITH_DIV
   | BOOL_OR
-  | BOOL_AN  deriving (Show, Eq)
+  | BOOL_AND  deriving (Show, Eq)
 
 
 data Lit 
   =   LitInt Int 
     | LitBool Bool 
     | LitPType T.Text 
-    | LitPMode PrintMode 
+    | LitPMode PrintMode
+    | LitSWMode F.SwitchMode 
     | LitWMode F.WriteMode
     | LitQString T.Text 
     | LitOptString [T.Text]
@@ -161,7 +164,7 @@ data MchBldr
   | MK_CASE 
   | MK_LISTENFOR 
   | MK_LIMIT 
-  | MK_GENERATE_S 
+  | MK_GENERATE_S -- Need to split off the sources and add an expr 
   | MK_GENRANDOM_S 
   | MK_WHY_S 
   | MK_MK_TEA_S 
@@ -183,6 +186,7 @@ data Type
   |  WModeT 
   |  QStringT
   |  OpStringsT 
+  |  SWModeT 
   |  FPathT
   |  FTypeT 
   |  MachineT 
@@ -194,31 +198,22 @@ data Type
   |  PredT Type
   |  FieldT
   |  UnitT
+  |  ADT T.Text Type 
     deriving (Eq, Read, Show)
 
 
 
+
 tShow :: Show a => a -> T.Text 
-tShow x= T.pack . show $ x  
+tShow x = T.pack . show $ x  
 
 prettyType :: Type -> T.Text 
 prettyType t = case t of
-  PairT BinaryOpT (PairT OpStringsT FieldT) -> "FieldSelector"
-  PairT BinaryOpT (PairT OpStringsT OpStringsT) -> "FieldSelectorPlus"
-  PredT (PairT BinaryOpT (PairT OpStringsT FieldT)) -> "FieldSelectorExp"
-  PairT ProtoT ( PredT (PairT BinaryOpT (PairT OpStringsT FieldT))) -> "ProtocolSelector"
-  PredT (PairT ProtoT ( PredT (PairT BinaryOpT (PairT OpStringsT FieldT)))) -> 
-    "ProtocolSelectorExp"
-  YepT (PredT (PairT ProtoT ( PredT (PairT BinaryOpT (PairT OpStringsT FieldT))))) -> 
-    "MsgSelector"
-  ListT (YepT (PredT (PairT ProtoT ( PredT (PairT BinaryOpT (PairT OpStringsT FieldT)))))) -> "MsgSelectorExp"
-  PairT OpStringsT FieldT -> "FieldBuilder"
-  YepT (ListT (PairT OpStringsT FieldT)) -> "FieldBuilderExp"
-  PairT ProtoT (YepT (ListT (PairT OpStringsT FieldT))) -> "ProtocolBuilder"
-  YepT t     -> "Yep " <> tShow t 
-  PairT t1 t2 -> "(" <> tShow t1 <> "," <> tShow t2 <> ")"
-  ListT t      -> "[" <> tShow t <> "]"
-  PredT t      -> "Predicate " <> tShow t
+  ADT txt _    -> txt 
+  YepT t       -> "Yep " <> prettyType t 
+  PairT t1 t2  -> "(" <> prettyType t1 <> "," <> prettyType t2 <> ")"
+  ListT t      -> "[" <> prettyType t <> "]"
+  PredT t      -> "Predicate " <> prettyType t
   t1 :->: t2   -> prettyType t1 <>  " -> " <> prettyType t2
   x            -> tShow x 
 infixr 0 :->:
@@ -248,14 +243,14 @@ prettyLambda n e =  case e of
   (Var s)   -> s 
   (f :$: a) -> prettyLambda n f <> " $ " <> prettyLambda n a 
   (Lam i t e ) ->  "\\" 
-               <> i <> "::" <> (T.pack . show $ t)
+               <> i <> "::" <> (prettyType t)
                <> " -> \n" 
                <>   T.concat  (replicate (n + 1)  "      ") <> prettyLambda (n+1) e
   Unit         -> "()"
   Lit x        -> prettyLit x 
   Yep x        -> "Yep " <> prettyLambda n x
-  Nope t       -> "Nope::" <> (T.pack . show $ t )
-  Nil t        -> "[]::"  <> (T.pack . show $ t )
+  Nope t       -> "Nope::" <> (prettyType t )
+  Nil t        -> "[]::"  <> (prettyType t )
   Pair ex1 ex2 -> "(" <> prettyLambda n ex1 <> "," <> prettyLambda n ex2 <> ")"
   MchBldr m x  -> 
     "Machine Builder (" <> (T.pack . show $ m) <> ") " <> prettyLambda n x    
@@ -273,13 +268,14 @@ prettyLambda n e =  case e of
        foldr (\x acc -> if T.null acc then x <> "" else x <> "." <> acc) "" o 
      LitFPath f     -> T.pack . show $ f
      LitDouble d    -> T.pack . show $ d
-     LitField f     -> T.pack . show $ f 
+     LitField f     -> T.pack . show $ f
+     LitSWMode m    -> T.pack . show $ m
 
     prettyList :: Int -> Expr -> T.Text 
     prettyList n l = "[" <> (go n l)
       where
         go :: Int -> Expr -> T.Text
-        go _ (Nil t) = "]::" <> (T.pack . show $ t)
+        go _ (Nil t) = "]::" <> (prettyType t)
         go n (Cons x1 (Nil t)) = prettyLambda n x1 <> go n(Nil t)
         go n (Cons x xs ) = prettyLambda n x <> " , " <> go n xs  
 
@@ -294,29 +290,35 @@ whnf ee = spine ee []
         spine f as = foldl (:$:) f as
 
 freeVars :: Expr -> [Sym]
-freeVars (Var s)       = [s]
-freeVars (f :$: a)     = freeVars f `union` freeVars a
-freeVars (Lam i t e)   = freeVars e \\ [i]
-freeVars Unit          = []
-freeVars (Lit _)       = []
-freeVars (Yep x)       = freeVars x 
-freeVars (Nope t)      = []
-freeVars (Nil t)       = []
-freeVars (MchBldr _ x) = freeVars x
-freeVars (Cons x1 x2)  = freeVars x1 <> freeVars x2  
+freeVars (Binary _ x1 x2) = freeVars x1 <> freeVars x2 
+freeVars (Unary _ x)      = freeVars x 
+freeVars (Var s)          = [s]
+freeVars (f :$: a)        = freeVars f `union` freeVars a
+freeVars (Lam i t e)      = freeVars e \\ [i]
+freeVars Unit             = []
+freeVars (Lit _)          = []
+freeVars (Yep x)          = freeVars x 
+freeVars (Nope t)         = []
+freeVars (Nil t)          = []
+freeVars (MchBldr _ x)    = freeVars x
+freeVars (Cons x1 x2)     = freeVars x1 <> freeVars x2 
+
+
 subst :: Sym -> Expr -> Expr -> Expr
 subst v x b = sub b
   where
-      sub Unit            = Unit 
-      sub (Yep x1)        = Yep (sub x1)
-      sub (Nope t)        = Nope t 
-      sub (Pair ex1 ex2)  = Pair (sub ex1) (sub ex2)
-      sub (MchBldr m x1)  = MchBldr m (sub x1)
-      sub (Cons x1 x2)    = Cons (sub x1) (sub x2)
-      sub (Nil t)         = Nil t 
-      sub (Lit x1)        = Lit x1 
-      sub e@(Var i)       = if i == v then x else e
-      sub (f :$: a)       = (sub f) :$: (sub a)
+      sub (Binary o x1 x2) = Binary o (sub x1) (sub x2)
+      sub (Unary o x1)     = Unary o (sub x1)
+      sub Unit             = Unit 
+      sub (Yep x1)         = Yep (sub x1)
+      sub (Nope t)         = Nope t 
+      sub (Pair ex1 ex2)   = Pair (sub ex1) (sub ex2)
+      sub (MchBldr m x1)   = MchBldr m (sub x1)
+      sub (Cons x1 x2)     = Cons (sub x1) (sub x2)
+      sub (Nil t)          = Nil t 
+      sub (Lit x1)         = Lit x1 
+      sub e@(Var i)        = if i == v then x else e
+      sub (f :$: a)        = (sub f) :$: (sub a)
       sub (Lam i t e) =
           if v == i then
               Lam i t e
@@ -368,7 +370,6 @@ findVar (TypeEnv r) s =
     case lookup s r of
     Just t -> return t
     Nothing -> Left $ "Cannot find variable " <> s
-
 
 
 
