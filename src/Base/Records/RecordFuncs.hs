@@ -69,6 +69,7 @@ import Classes
 import Data.Monoid 
 import GPrettyPrint
 import THPrettyPrint 
+import Data.Default
 
 
 
@@ -384,5 +385,30 @@ compField comp val prox =  case parseIt val  of
     Nothing -> 
         Left $ "Error! Could not parse " <> val <> " as a value of type " <> (T.pack . show $ typeOf @a)   
 
+parsePrimWith :: forall a. Primitive a => T.Text -> Proxy a ->  Either T.Text (a -> [(ValRangeSet Value)])
+parsePrimWith txt _ = case parseIt @(ValRangeSet a) txt  of
+  Just vrs -> Right $ \x -> [fmap packVal vrs ]
+  Nothing  -> Left "parse error"
 
+typedParseIt :: forall a b. (StringyLens a, PackVal b, Primitive b) 
+             => T.Text -- TypeString
+             -> OpticStrs
+             -> T.Text -- Field to parse
+             -> Either T.Text (ValRangeSet Value, PrimToken)
+typedParseIt tStr oStrs fldTxt =
+  let myVRS :: Either T.Text (ValRangeSet Value) 
+      myVRS = withProtocol tStr $ \prox -> 
+                case applyTo prox oStrs $ parsePrimWith fldTxt of
+                  Right f -> case f def of
+                    Just [vs] -> Right $ vs
+                    _         -> Left "some stupid error"
+      myToken :: Either T.Text PrimToken 
+      myToken = withProtocol tStr $ \prox -> getToken prox oStrs  
+  in myVRS >>= \vrs -> 
+      myToken >>= \tok -> 
+        return $ (vrs,tok)
+
+
+proxDef :: forall a. (Primitive a) => Proxy a -> a 
+proxDef _ = def @a
 

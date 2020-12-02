@@ -7,7 +7,7 @@ module Check where
 import Syntax
 import qualified Data.Text as T 
 import Control.Monad 
-
+import BaseDefs 
 
 prettyDef :: Def -> T.Text 
 prettyDef (Def nm vars exp) = case tCheck initialEnv exp of
@@ -90,8 +90,17 @@ tCheck r (Cons ex1 ex2) = case (tCheck r ex1, tCheck r ex2) of
   (Left err,_)        -> Left err 
   (Right _, Left err) -> Left err 
 
-tCheck r (MchBldr _ ex) = case tCheck r ex of
-  Right aType  -> Right $ MachineT
+tCheck r (MchBldr m ex) = case tCheck r ex of
+  Right aType  -> case mchArgs m of
+    Just t -> if rType aType == t 
+      then Right MachineT 
+      else Left $ "Error: Cannot construct machine " 
+               <> (T.pack . show $ m) <> "\n"
+               <> (T.pack . show $ m)
+               <> " takes an argument of type \n"
+               <> prettyType t
+               <> "\nbut was supplied with an argument of type " 
+               <> prettyType (aType)
   Left  err    -> Left err 
 
 tCheck _ Unit = Right UnitT 
@@ -148,3 +157,82 @@ typeCheck expr env  =
     case tCheck env expr of
     Left msg -> Left $ "Type error:\n" <> msg
     Right t -> Right t
+
+
+mchArgs :: MchBldr -> Maybe Type
+mchArgs m = case m of
+
+  MK_SELECT      -> Just $ unSyn pSelT
+
+  MK_DISCARD     -> Just $ unSyn pSelT 
+
+  MK_MAKERANDOM  -> Just $ undefined 
+
+  MK_PRETTYPRINT -> Just $ PModeT 
+
+  MK_PRINTFIELD  -> Just $ PairT QStringT WModeT  
+
+  MK_WRITEFIELD  -> 
+    Just $ PairT FPathT (PairT QStringT (PairT PModeT (PairT ProtoT OpStringsT)))
+
+  MK_POP         -> Just $ ProtoT
+  MK_PUSH        -> Just $ unSyn pBuilderT 
+  MK_EXTRACT     -> Just $ ProtoT
+  MK_CUT         -> Just $ ProtoT
+  MK_PULL        -> Just $ ProtoT  
+  MK_LIFT        -> Just $ unSyn pBuilderT 
+  MK_SET         -> Just $ unSyn pBuilderT
+  MK_CHECKSUM    -> Nothing 
+  MK_MODIFYOPT   -> 
+    Just $ PairT ProtoT (PairT FTypeT (PairT (unSyn fSelExpT) (unSyn fBuilderT)))
+
+  MK_INSERTOPT -> 
+    Just $ PairT ProtoT (PairT FTypeT (ListT (unSyn fBuilderT)))
+
+  MK_DELETEOPT -> Just $ PairT ProtoT (PairT FTypeT (unSyn fSelExpT))
+
+  MK_ALERT -> Just $ PairT QStringT (unSyn pSelT)
+
+  MK_VOID -> Nothing
+
+  MK_REPORT -> Just QStringT
+
+  MK_CREATE -> Just $ PairT IntT (PairT IntT (unSyn pBuilderT))
+
+  MK_COUNT -> Just IntT 
+
+  MK_BUFFER -> Just IntT 
+
+  MK_DUMP -> Just $ PairT FPathT IntT 
+
+  MK_UNTIL -> Just $ PairT (unSyn pSelExpT) MachineT 
+
+  MK_UNLESS -> Just $ PairT (unSyn pSelExpT) MachineT 
+
+  MK_WHEN -> Just $ PairT (unSyn pSelExpT) MachineT 
+
+  MK_AFTER -> Just $ PairT (unSyn pSelExpT) MachineT 
+
+  MK_SWITCH -> Just $ PairT SWModeT (PairT PModeT (PairT MachineT MachineT))
+
+  MK_COUNTSWITCH -> undefined 
+
+  MK_TIMESWITCH -> Just $ PairT IntT (PairT MachineT MachineT)
+
+  MK_CASE -> undefined 
+
+  MK_LISTENFOR -> undefined 
+
+  MK_LIMIT -> undefined 
+
+  MK_GENERATE_S -> undefined 
+
+  MK_GENRANDOM_S -> undefined 
+
+  MK_WHY_S -> undefined 
+
+  MK_MK_TEA_S -> undefined 
+
+  MK_LISTEN_S -> undefined 
+
+  MK_READPCAP_S -> undefined 

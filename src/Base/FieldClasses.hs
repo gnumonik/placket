@@ -90,6 +90,11 @@ instance MaybeEnum MessageContent where
 
 data ValRangeSet a = Val a | Range a a | Set [a] deriving (Show, Eq)
 
+instance Functor ValRangeSet where 
+  fmap f (Val a) = Val (f a)
+  fmap f (Range a a') = Range (f a) (f a')
+  fmap f (Set a) = Set (map f a)
+
 class (Eq a) => CanParse a where
   parseIt :: T.Text -> Maybe a
 
@@ -269,7 +274,7 @@ data Value = W8 Word8
                | DNAME DNSName
                | LIST [Value] deriving (Show, Eq, Ord) 
 
-data TypedVal = TypedVal Value PrimToken
+data TypedVal = TypedVal Value PrimToken deriving (Show, Eq)
 
 data AnnotatedValue = AnnotatedValue TypedVal T.Text   
 
@@ -445,6 +450,18 @@ subtract :: (Primitive d, PackVal d, Integral d, Integral a) => Proxy d -> a -> 
 subtract v1 i _ = liftNumericFunc (-) v1 (packVal (fromIntegral i :: Word32))
 
 
+withToken :: PrimToken -> (forall  b. (Primitive b, PackVal b) => Proxy b -> Value -> Either TypeError c) -> (Value -> Either TypeError c) 
+withToken tok f = case tok of
+  W8'       -> \v ->  f (Proxy @Word8) v
+  W16'      -> \v ->  f (Proxy @Word16) v
+  W32'      -> \v ->  f (Proxy @Word32) v
+  W24'      -> \v ->  f (Proxy @Word24) v
+  IP4ADDR'  -> \v ->  f (Proxy @IP4Address) v
+  MAC'      -> \v ->  f (Proxy @MacAddr) v
+  BSTRING'  -> \v ->  f (Proxy @BS.ByteString) v
+  FLAG'     -> \v ->  f (Proxy @Flag) v
+  DNAME'    -> \v ->  f (Proxy @Flag) v  
+  MSGC'     -> \v ->  f (Proxy @MessageContent) v
 ------
 -- Class Primitive. Every value in every field of every protocol type must be constructed from these types, and these types alone. 
 ------

@@ -8,18 +8,29 @@ import Syntax
 import Data.Map (Map)
 import qualified Data.Map as Map 
 import qualified Data.Text as T 
+import Control.Monad.State.Strict
+
+initEnv :: DSLEnv 
+initEnv = 
+  let myTypes = (Map.fromList $ baseTypes <> (Map.toList compoundTypes))
+      myEnv = DSLEnv (TypeEnv myTypes)  defMap
+  in myEnv 
+
+initDSL :: DSLMonad ()
+initDSL = lift . put $ initEnv
 
 
 -- Composite Types
 
-initEnv :: LambdaEnv 
-initEnv = LambdaEnv 
+unSyn :: Type -> Type
+unSyn (Type _ t) = t 
+unSyn other      = other 
 
 casesT :: Type
 casesT = ListT (PairT pSelExpT MachineT )
 
-adts :: Map T.Text Type
-adts = Map.fromList . map go 
+compoundTypes :: Map T.Text Type
+compoundTypes = Map.fromList . map go 
       $ [fSelT
         ,fSelPlusT 
         ,fSelExpT
@@ -30,6 +41,8 @@ adts = Map.fromList . map go
         ,fBuilderT
         ,fBuilderExpT 
         ,pBuilderT]
+  where
+    go (Type nm ex) = (nm,ex)
 
 
 baseTypes :: [(T.Text, Type)]
@@ -50,34 +63,34 @@ baseTypes = [ ("Bool",BoolT)
         , ("()"   , UnitT)]
 
 fSelT :: Type
-fSelT = ADT "FieldSelector" $ PairT BinaryOpT (PairT OpStringsT FieldT)
+fSelT = Type "FieldSelector" $ PairT BinaryOpT (PairT OpStringsT FieldT)
 
 fSelPlusT :: Type
-fSelPlusT = ADT "FieldReference" $ PairT BinaryOpT (PairT OpStringsT OpStringsT)
+fSelPlusT = Type "FieldReference" $ PairT BinaryOpT (PairT OpStringsT OpStringsT)
 
 fSelExpT :: Type
-fSelExpT = ADT "Predicate FieldSelector" $ PredT fSelT 
+fSelExpT = Type "Predicate FieldSelector" $ PredT fSelT 
 
 pSelT :: Type
-pSelT = ADT "ProtocolSelector" $ PairT ProtoT fSelExpT 
+pSelT = Type "ProtocolSelector" $ PairT ProtoT fSelExpT 
 
 pSelExpT :: Type 
-pSelExpT = ADT "Predicate ProtocolSelector" $ PredT pSelT 
+pSelExpT = Type "Predicate ProtocolSelector" $ PredT pSelT 
 
 mSelT :: Type 
-mSelT = ADT "ProtocolSelector" $ YepT pSelT 
+mSelT = Type "ProtocolSelector" $ YepT pSelT 
 
 mSelExpT :: Type
-mSelExpT = ADT "[ProtocolSelector]" $ ListT pSelT 
+mSelExpT = Type "[ProtocolSelector]" $ ListT pSelT 
 
 fBuilderT :: Type
-fBuilderT = ADT "FieldBuilder" $ PairT OpStringsT FieldT 
+fBuilderT = Type "FieldBuilder" $ PairT OpStringsT FieldT 
 
 fBuilderExpT :: Type 
-fBuilderExpT = ADT "FieldBuilders" $ YepT (ListT fBuilderT)
+fBuilderExpT = Type "FieldBuilders" $ YepT (ListT fBuilderT)
 
 pBuilderT :: Type
-pBuilderT = ADT "ProtocolBuilder" $ PairT ProtoT fBuilderExpT 
+pBuilderT = Type "ProtocolBuilder" $ PairT ProtoT fBuilderExpT 
 
 -- Utility function
 
@@ -231,12 +244,14 @@ mkInsertOpt =
 
 mkDeleteOpt :: Def
 mkDeleteOpt =
-  let p = "p"
-      f = "f"
+  let p  = "p"
+      f  = "f"
+      fs = "fs"
   in Def "deleteOpt" [p,f]
       $ Lam p ProtoT
         $ Lam f FTypeT
-          $ MchBldr MK_DELETEOPT (Pair (Var p) (Var f))
+          $ Lam fs fSelExpT
+            $ MchBldr MK_DELETEOPT (Pair (Var p) (Pair (Var f) (Var fs)))
 
 
 mkSelect :: Def 

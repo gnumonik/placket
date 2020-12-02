@@ -103,6 +103,7 @@ library
       Eval
       Check
       BaseDefs
+      Inference
 
 -- Misc/Tests
     --  Tests

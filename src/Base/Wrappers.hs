@@ -46,13 +46,6 @@ import THRecords
 import Staging 
 
 
-
-
-
-
-
-
-
 as :: forall choice union. Possibly choice union => union -> Maybe choice
 as protocolmessage = isA (Proxy @choice) protocolmessage
 
@@ -76,7 +69,14 @@ getField prox fs =  case applyTo prox fs (getField' ) of
 unliftedGetField :: forall a. (StringyLens a) => Proxy a -> OpticStrs ->  Either T.Text (a -> Maybe [(Value)] )
 unliftedGetField prox fs = applyTo prox fs (getField') 
 
+getToken' :: forall a. Primitive a => Proxy a -> Either T.Text (a -> [PrimToken])
+getToken' _ = Right . const $ [token @a] 
 
+getToken :: forall a. (StringyLens a) => Proxy a -> OpticStrs -> Either T.Text PrimToken
+getToken prox fs = case applyTo prox fs getToken' of
+  Right f -> case f (def @a) of
+    Just [t] -> Right t
+  _   -> Left "Couldn't get primtoken. This shouldn't be possible."
 
 
 

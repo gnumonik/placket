@@ -10,7 +10,8 @@ import Syntax
 import qualified Data.Text as T 
 import Text.Megaparsec 
 import BaseDefs 
-import Text.Megaparsec.Char.Lexer hiding (lexeme, binary)
+import Check
+import Text.Megaparsec.Char.Lexer hiding (lexeme, binary, space)
 import Text.Megaparsec.Char 
 import Control.Monad.Combinators.Expr
 import Control.Monad
@@ -18,82 +19,149 @@ import qualified FactoryTypes as FT
 import RecordParsers 
 import ArgumentParsers 
 import Data.Map (Map)
-import qualified Data.Map as Map 
+import Control.Monad.Except
+import Control.Monad.Trans.State.Strict 
+import qualified Data.Map as Map
+import qualified Data.Text.IO as TIO 
+import Control.Monad.Identity
 
-expr' :: T.Text -> Either T.Text Expr
-expr' = parseLex (expr defMap)
+type Types = Map.Map Sym Type 
 
-term :: Map T.Text Expr -> Parser Expr
-term m = pairExpr m
-     <|> parens (expr m)
-     <|> lamExpr m
-     <|> listExpr m
-     <|> binOp m
-     <|> unaryOp m
+type Defs  = Map.Map Sym Expr 
+
+
+
+parseAndCheck :: T.Text -> DSLMonad (Type,Expr)
+parseAndCheck txt = do
+  t <- getTyEnv
+  ex <- liftEither $ parseDSL' txt
+  tced <- liftEither $ tCheck t ex 
+  return (tced,ex)
+  
+
+
+parseDSL' txt = runIdentity $ evalStateT (runExceptT $ parseExpr txt) initEnv
+
+
+
+
+withTestHandler txt = withExceptT testHandler (parseExpr txt)
+
+
+testHandler :: T.Text -> IO ()
+testHandler e =  TIO.putStr e 
+
+parseExpr :: T.Text -> DSLMonad Expr 
+parseExpr txt = do 
+    t <- getTypes
+    d <- getDefs
+    liftEither $ parseLex (expr d t) txt
+
+
+
+
+term :: Defs -> Types -> Parser Expr
+term d t 
+      = namedFunction d
+     <|> pairExpr d t
+     <|> parens (expr d t)
+     <|> binOp d t
+     <|> lamExpr d t
+     <|> listExpr d t
+     <|> unaryOp d t
      <|> lit
-     <|> yepExpr m
-     <|> nopeExpr 
-     <|> namedFunction m
-     <|> unit 
+     <|> yepExpr d t
+     <|> nopeExpr t
+     <|> unit
      <|> varExpr'
 
-expr :: Map T.Text Expr ->  Parser Expr
-expr m = lexeme $ try $ do
-  ts <- some (term m)
+expr :: Defs -> Types ->  Parser Expr
+expr d t = lexeme $ try $ do
+  ts <- some (term d t)
   return $ foldr1 (\x y -> x :$: y) ts 
 
 
-unaryOp :: Map T.Text Expr -> Parser Expr
-unaryOp m = lexeme $ try $ do
+
+
+unaryOp :: Defs -> Types  -> Parser Expr
+unaryOp d t = lexeme $ try $ do
   void . lexeme $ string "not"
   x <- notUnaryOp
   return $ Unary BOOL_NOT x
  where
    notUnaryOp 
-      =  pairExpr m
+      =  pairExpr d t 
       <|> parens  
-            (pairExpr m
-            <|> lamExpr m 
-            <|> listExpr m 
-            <|> binOp m 
+            (namedFunction d 
+            <|> pairExpr d t
+            <|> binOp d t
+            <|> lamExpr d t
+            <|> listExpr d t
             <|> lit
-            <|> yepExpr m 
-            <|> nopeExpr 
-            <|> namedFunction m
+            <|> yepExpr d t
+            <|> nopeExpr t
             <|> unit
             <|> varExpr' )
-        <|>  (pairExpr m
-        <|> lamExpr m 
-        <|> listExpr m 
-        <|> binOp m 
+        <|>  (namedFunction d 
+        <|> pairExpr d t
+        <|> binOp d t
+        <|> lamExpr d t
+        <|> listExpr d t
         <|> lit
-        <|> yepExpr m 
-        <|> nopeExpr 
-        <|> namedFunction m
+        <|> yepExpr d t
+        <|> nopeExpr t
         <|> varExpr' 
         <|> unit
         <|> varExpr' )
+
+lExpr :: Defs -> Types -> Parser Expr
+lExpr d t = lexeme $ try $ do
+  void $ char 'L'
+  space
+  ex <- expr d t
+  return $ L ex 
+
+rExpr :: Defs -> Types -> Parser Expr
+rExpr d t = lexeme $ try $ do
+  void $ char 'R'
+  space
+  ex <- expr d t
+  return $ R ex 
+
+-- write the reducer for this 
+caseExpr :: Defs -> Types -> Parser Expr
+caseExpr d t = lexeme $ try $ do
+  void . lexeme $ string "Choice"
+  void (lexChar 'L')
+  void . lexeme $ string "=>" 
+  x1 <- expr d t 
+  void (lexChar ';')
+  void (lexChar 'R')
+  void . lexeme $ string "=>" 
+  x2 <- expr d t
+  return $ Choice  (Pair (L Unit) x1) (Pair (R Unit) x2) 
+
     
 
-namedFunction :: Map T.Text Expr -> Parser Expr
-namedFunction m =
-  let m' = map (\x -> string x :: Parser T.Text) . map fst . Map.toList $ m
+namedFunction :: Defs -> Parser Expr
+namedFunction d  =
+  let m' = map (\x -> string x :: Parser T.Text) . map fst . Map.toList $ d
       p  = choice m' 
   in lexeme $ try $ do
     parsed <- p
-    case Map.lookup parsed m of
+    case Map.lookup parsed d of
       Just ex -> return ex 
       Nothing -> fail $ "No def named " <> (T.unpack parsed) 
 
 
-lamExpr :: Map T.Text Expr -> Parser Expr
-lamExpr m = lexeme $ try $ do
+lamExpr :: Defs -> Types -> Parser Expr
+lamExpr d ty = lexeme $ try $ do
   void . lexeme $ char '\\'
   (Var v) <- varExpr' 
   void . lexeme $ string "::"
-  t    <- types
+  t    <- types ty
   void . lexeme $ string "->"
-  ex   <- expr m
+  ex   <- expr d ty
   return $ Lam v t ex 
 
 
@@ -105,68 +173,70 @@ varExpr' = lexeme $ try $ do
   return $ Var . T.pack $ (first : rest)
 
 
-pairExpr :: Map T.Text Expr ->  Parser Expr
-pairExpr m  = lexeme $ try $ do
+pairExpr :: Defs -> Types ->  Parser Expr
+pairExpr d t  = lexeme $ try $ do
   void . lexeme $ char '('
-  x1 <- expr m
+  x1 <- expr d t
   void . lexeme $ char ','
-  x2 <- expr m
+  x2 <- expr d t
   void . lexeme $ char ')'
   return $ Pair x1 x2 
 
-listExpr :: Map T.Text Expr ->  Parser Expr
-listExpr m  = lexeme $ try $ do
+listExpr :: Defs -> Types ->  Parser Expr
+listExpr d ty  = lexeme $ try $ do
   void . lexeme $ char '['
-  xs <-  expr m `sepBy` (lexeme $ char ',')
+  xs <-  expr d ty `sepBy` (lexeme $ char ',')
   void . lexeme $ char ']'
   void . lexeme $ string "::"
-  t  <- types
+  t  <- types ty
   return $ case xs of
     [] -> Nil t 
     _  -> foldr (\x y -> x `Cons` y) (Nil t) xs 
 
-binOp :: Map T.Text Expr -> Parser Expr 
-binOp  m = lexeme $ try $ do
-  first <-   pairExpr m 
-            <|>  parens (pairExpr m
-                <|> lamExpr m
-                <|> listExpr m
-                <|> unaryOp m
-                <|> lit
-                <|> yepExpr m
-                <|> nopeExpr 
-                <|> namedFunction m
-                <|> unit
-                <|> varExpr') 
-            <|>  (pairExpr m
-                <|> lamExpr m
-                <|> listExpr m
-                <|> unaryOp m
-                <|> lit
-                <|> yepExpr m
-                <|> nopeExpr 
-                <|> namedFunction m
-                <|> unit
-                <|> varExpr') 
-
+binOp :: Defs -> Types ->  Parser Expr 
+binOp  d t = lexeme $ try $ do
+  first <- notBinOp   
   s <- option Nothing (just binaryOp)
   case s of
     Nothing -> return first
     Just anOp -> do
-      rest <- expr m
+      rest <- expr d t
       return $ Binary anOp first rest 
+ where
+   notBinOp = pairExpr d t
+            <|>  parens (
+                    namedFunction d 
+                <|> pairExpr d t
+                <|> lamExpr d t
+                <|> listExpr d t
+                <|> unaryOp d t
+                <|> lit
+                <|> yepExpr d t
+                <|> nopeExpr t
+                <|> unit
+                <|> varExpr') 
+            <|>  (namedFunction d 
+                <|> pairExpr d t
+                <|> lamExpr d t
+                <|> listExpr d t
+                <|> unaryOp d t
+                <|> lit
+                <|> yepExpr d t
+                <|> nopeExpr t
+                <|> unit
+                <|> varExpr') 
 
-yepExpr :: Map T.Text Expr ->  Parser Expr
-yepExpr m = lexeme $ try $ do
+yepExpr :: Defs -> Types ->   Parser Expr
+yepExpr d t = lexeme $ try $ do
   void . lexeme $ string "Yep"
-  x <- expr m
+  x <- expr d t
   return $ Yep x
   
-nopeExpr ::  Parser Expr
-nopeExpr  = lexeme $ try $ do
+nopeExpr :: Types ->   Parser Expr
+nopeExpr ty = lexeme $ try $ do
   void . lexeme $ string "Nope"
   void . lexeme $ string "::"
-  t <- types
+  t <- types ty
   return $ Nope t 
 
 parens :: Parser a -> Parser a
@@ -202,7 +272,7 @@ lit = (Lit . LitInt       <$> int)
   <|> (Lit . LitFPath     <$> tag "path:" filePath)
   <|> (Lit . LitFType     <$> tag "fieldType:" aWord)
   <|> (Lit . LitDouble    <$> double)
-  <|> (Lit . LitField     <$> tag "field:" field)
+  -- <|> (Lit . LitField     <$> tag "field:" field)
 
 
 
@@ -211,8 +281,11 @@ unit  = lexeme $ try $ do
   void . lexeme $ string "()"
   return Unit 
 
+binaryOp :: Parser BinOp
 binaryOp 
-  = prsEQ 
+  =   prsPRECR
+  <|> prsPRECL
+  <|> prsEQ 
   <|> prsNOTEQ 
   <|> prsGTE 
   <|> prsGT 
@@ -223,7 +296,8 @@ binaryOp
   <|> prsTIMES  
   <|> prsDIV 
   <|> prsOR 
-  <|> prsAND 
+  <|> prsAND
+
   where
     prsEQ  = lexeme $ try $ do
       void . lexeme $ string "=="
@@ -273,9 +347,17 @@ binaryOp
       void . lexeme $ string "&&"
       return $ BOOL_AND 
 
+    prsPRECR = lexeme $ try $ do
+      void . lexeme $ char '$'
+      return $ PREC_RIGHT 
+
+    prsPRECL = lexeme $ try $ do
+      void . lexeme $ char '&'
+      return $ PREC_LEFT 
+
 
 types :: Map T.Text Type -> Parser Type
-types m = arrT <|> pairT <|> listT <|> yepT <|> basetype <|> adt m
+types m = arrT m <|> pairT m <|> listT m <|> yepT m <|> basetype <|> adt m <|> parens (types m)
 
 adt :: Map T.Text Type -> Parser Type 
 adt m = 
