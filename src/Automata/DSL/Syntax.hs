@@ -81,9 +81,9 @@ data Expr
     | Unary UnOp Expr 
     | Binary BinOp Expr Expr 
     | MchBldr MchBldr Expr
-    | L Expr
-    | R Expr 
-    | Choice Expr Expr  
+   -- | L Expr
+   -- | R Expr 
+   -- | Choice Expr Expr  
     | Unit 
       deriving (Show, Eq)
 infixr 0 :$: 
@@ -109,21 +109,29 @@ data BinOp
   | BOOL_OR
   | BOOL_AND
   | PREC_RIGHT
-  | PREC_LEFT  deriving (Show, Eq)
+  | PREC_LEFT  deriving (Show, Eq, Ord)
 
+ops :: Map.Map BinOp Type 
+ops = Map.fromList $ 
+ [
+  ((COMP_EQ)  ,TVar (TV "a") :->: TVar (TV "b") :->: BoolT )
+  , (COMP_NOTEQ    , TVar (TV "a") :->: TVar (TV "b") :->: BoolT )
+  , ((COMP_GT)     , TVar (TV "a") :->: TVar (TV "b") :->: BoolT )
+  ,((COMP_GTE)     , TVar (TV "a") :->: TVar (TV "b") :->: BoolT )
+  ,((COMP_LT)      , TVar (TV "a") :->: TVar (TV "b") :->: BoolT) 
+  ,((COMP_LTE)     , TVar (TV "a") :->: TVar (TV "b") :->: BoolT) 
+  ,((ARITH_PLUS)   , IntT :->: IntT :->: IntT)
+  ,((ARITH_TIMES)  , IntT :->: IntT :->: IntT)
+  ,((ARITH_MINUS)  , IntT :->: IntT :->: IntT)
+  ,((ARITH_DIV)    , IntT :->: IntT :->: IntT)
+  ,((BOOL_AND)     , BoolT :->: BoolT  :->: BoolT)
+  ,((BOOL_OR)      , BoolT :->: BoolT  :->: BoolT )
+ -- ,((PREC_RIGHT)  , TVar (TV "a") :->: TVar (TV "b")   :->: TVar (TV "c") )
+ -- ,((PREC_LEFT)   , TVar (TV "a") :->: TVar (TV "b")   :->: TVar (TV "c") )
+ ]
 
 data Lit 
   =   LitInt Int
-    | LitWord8 Word8 
-    | LitWord16 Word16
-    | LitWord24 Word24
-    | LitWord32 Word32
-    | LitIP4 IP4Address 
-    | LitMac MacAddr
-    | LitBString BS.ByteString
-    | LitFlag Flag 
-    | LitDName DNSName
-    | LitMSGC MessageContent
     | LitBool Bool 
     | LitPType T.Text 
     | LitPMode PrintMode
@@ -137,6 +145,40 @@ data Lit
     | LitField (ValRangeSet Lit, PrimToken) deriving (Show, Eq)
 
 
+newtype TVar = TV T.Text deriving (Show, Eq, Read)
+
+instance Ord TVar where
+  (TV x) <= (TV y) = x <= y
+
+data Type 
+  =  Type :->: Type
+  |  UnaryOpT 
+  |  BinaryOpT 
+  |  BoolT 
+  |  IntT
+  |  IP4T
+  |  MacT
+  |  ProtoT 
+  |  PModeT 
+  |  WModeT 
+  |  QStringT
+  |  OpStringsT 
+  |  SWModeT 
+  |  FPathT
+  |  FTypeT 
+  |  MachineT
+  |  DoubleT 
+  |  SourceT 
+  |  YepT  Type -- "Maybe Type"
+  |  PairT Type Type 
+  |  ListT Type
+  |  PredT Type
+  |  FieldT
+  |  UnitT
+  |  TVar TVar  
+  |  Type T.Text Type 
+    deriving (Eq, Read, Show)
+infixr 0 :->:
 
 
 
@@ -195,35 +237,6 @@ data MchBldr
  
 
 
-data Type 
-  =  Type :->: Type
-  |  UnaryOpT 
-  |  BinaryOpT 
-  |  BoolT 
-  |  IntT 
-  |  ProtoT 
-  |  PModeT 
-  |  WModeT 
-  |  QStringT
-  |  OpStringsT 
-  |  SWModeT 
-  |  FPathT
-  |  FTypeT 
-  |  MachineT
-  |  LR Type Type  
-  |  DoubleT 
-  |  SourceT 
-  |  YepT  Type -- "Maybe Type"
-  |  PairT Type Type 
-  |  ListT Type
-  |  PredT Type
-  |  FieldT
-  |  UnitT
-  |  Type T.Text Type 
-    deriving (Eq, Read, Show)
-infixr 0 :->:
-
-
 type TypedExpr = (Type,Expr)
 
 newtype TypeEnv = TypeEnv (Map.Map Sym Type) deriving (Show, Eq)
@@ -263,6 +276,7 @@ prettyType t = case t of
   PairT t1 t2  -> "(" <> prettyType t1 <> "," <> prettyType t2 <> ")"
   ListT t      -> "[" <> prettyType t <> "]"
   PredT t      -> "Predicate " <> prettyType t
+  TVar (TV v)  -> "@" <> v
   t1 :->: t2   -> prettyType t1 <>  " -> " <> prettyType t2
   x            -> tShow x 
 
@@ -354,11 +368,6 @@ prettyLambda n e =  case e of
       PREC_RIGHT   -> wrap $ prettyLambda n x1 <> " $ " <> prettyLambda n x2 
 
       PREC_LEFT    -> wrap $ prettyLambda n x1 <> " & " <> prettyLambda n x2 
-
-    
-
-    
-  
 
 
 whnf :: Expr -> Expr

@@ -130,7 +130,7 @@ tCheck r (Binary o x1 x2) = case o of
   BOOL_OR     -> goPred r x1 x2
   BOOL_AND    -> goPred r x1 x2 
  where
-
+-- these are wrong w/ the expanded primitives
    goComp r' x1' x2' = case mapM (tCheck r') [x1',x2'] of
      Right _ -> Right BoolT
      Left err     -> Left err 
@@ -157,6 +157,12 @@ typeCheck expr env  =
     case tCheck env expr of
     Left msg -> Left $ "Type error:\n" <> msg
     Right t -> Right t
+
+
+getMachineType :: MchBldr -> Type
+getMachineType m = case mchArgs m of
+  Just t -> t :->: MachineT
+  Nothing -> UnitT :->: MachineT 
 
 
 mchArgs :: MchBldr -> Maybe Type

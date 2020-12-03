@@ -20,6 +20,7 @@ initDSL :: DSLMonad ()
 initDSL = lift . put $ initEnv
 
 
+
 -- Composite Types
 
 unSyn :: Type -> Type
@@ -136,8 +137,20 @@ baseDefs = [mkPPrint
          , mkAfter 
          , mkSwitch 
          , mkTimeSwitch
-         , mkCase]
+         , mkCase
+         , cons'
+         , singleton]
 
+tvar = TVar . TV 
+
+singleton :: Def
+singleton = Def "singleton" ["x"] $ Lam "x" (tvar "a") $ Cons (Var "x") $ Nil (tvar "a")
+
+cons' :: Def
+cons' = Def "cons" ["x","y"] 
+          $ Lam "x" (tvar "a") 
+            $ Lam "y" (ListT $ tvar "a") 
+              $ Cons (Var "x") (Var "y")
 
 mkProtoBuilder :: Expr
 mkProtoBuilder  = Lam "tstring" (ProtoT) 

@@ -24,6 +24,7 @@ import Control.Monad.Trans.State.Strict
 import qualified Data.Map as Map
 import qualified Data.Text.IO as TIO 
 import Control.Monad.Identity
+import Control.Lens
 
 type Types = Map.Map Sym Type 
 
@@ -40,11 +41,13 @@ parseAndCheck txt = do
   
 
 
+parseDSL' :: T.Text -> Either DSLError Expr
 parseDSL' txt = runIdentity $ evalStateT (runExceptT $ parseExpr txt) initEnv
 
 
 
 
+withTestHandler :: T.Text -> ExceptT (IO ()) (StateT DSLEnv Identity) Expr
 withTestHandler txt = withExceptT testHandler (parseExpr txt)
 
 
@@ -54,15 +57,35 @@ testHandler e =  TIO.putStr e
 parseExpr :: T.Text -> DSLMonad Expr 
 parseExpr txt = do 
     t <- getTypes
-    d <- getDefs
-    liftEither $ parseLex (expr d t) txt
+    d <- getDefs 
+    case parseLex (def d t) txt of
+      Right (Def nm _ ex) -> do 
+        lift . modify $ over defEnv $ Map.insert nm ex 
+        return ex 
+      Left err -> do 
+        case parseLex (expr d t) txt of 
+          Right ex -> return ex 
+          Left err -> liftEither (Left err)
 
 
+
+def :: Defs -> Types -> Parser Def
+def d t = lexeme $ try $ do
+  void . lexeme $ string "def"
+  nm   <- var
+  args <- many varExpr'
+  void . lexeme $ char '='
+  ex   <-  expr d t
+  let argVars = map (\(Var x) -> x) args 
+  let argTVars = zip args $ map T.singleton ['b'..'z']
+  return $ Def nm argVars $ foldr (\((Var a),v) acc -> Lam a (TVar . TV $ v)  acc)  ex argTVars 
+  
+  
 
 
 term :: Defs -> Types -> Parser Expr
 term d t 
-      = namedFunction d
+      =  namedFunction d
      <|> pairExpr d t
      <|> parens (expr d t)
      <|> binOp d t
@@ -113,7 +136,7 @@ unaryOp d t = lexeme $ try $ do
         <|> varExpr' 
         <|> unit
         <|> varExpr' )
-
+{--
 lExpr :: Defs -> Types -> Parser Expr
 lExpr d t = lexeme $ try $ do
   void $ char 'L'
@@ -140,7 +163,7 @@ caseExpr d t = lexeme $ try $ do
   void . lexeme $ string "=>" 
   x2 <- expr d t
   return $ Choice  (Pair (L Unit) x1) (Pair (R Unit) x2) 
-
+--}
     
 
 namedFunction :: Defs -> Parser Expr
@@ -158,11 +181,16 @@ lamExpr :: Defs -> Types -> Parser Expr
 lamExpr d ty = lexeme $ try $ do
   void . lexeme $ char '\\'
   (Var v) <- varExpr' 
-  void . lexeme $ string "::"
-  t    <- types ty
+  t <- option (TVar (TV "x")) (annType ty)
   void . lexeme $ string "->"
   ex   <- expr d ty
   return $ Lam v t ex 
+
+annType :: Types -> Parser Type 
+annType ty = lexeme $ try $ do
+  void . lexeme $ string "::"
+  t <- types ty
+  return t 
 
 
 varExpr' :: Parser Expr 
@@ -187,8 +215,7 @@ listExpr d ty  = lexeme $ try $ do
   void . lexeme $ char '['
   xs <-  expr d ty `sepBy` (lexeme $ char ',')
   void . lexeme $ char ']'
-  void . lexeme $ string "::"
-  t  <- types ty
+  t <- option (TVar (TV "x")) (annType ty)
   return $ case xs of
     [] -> Nil t 
     _  -> foldr (\x y -> x `Cons` y) (Nil t) xs 
@@ -268,7 +295,7 @@ lit = (Lit . LitInt       <$> int)
   <|> (Lit . LitSWMode    <$> tag "swMode:" switchMode)
   <|> (Lit . LitWMode     <$> tag "wMode:" writeMode)
   <|> (Lit . LitQString   <$> quotedString )
-  <|> (Lit . LitOptString <$> opticStrings)
+  <|> (Lit . LitOptString <$> between (lexeme . string $ "<") (lexeme . string $ ">") opticStrings)
   <|> (Lit . LitFPath     <$> tag "path:" filePath)
   <|> (Lit . LitFType     <$> tag "fieldType:" aWord)
   <|> (Lit . LitDouble    <$> double)
@@ -404,6 +431,7 @@ yepT m = lexeme $ try $ do
 
 
 
+basetype :: Parser Type
 basetype = 
   let tyStr = choice $ map (\x -> string x :: Parser T.Text) . map fst $ baseTypes   
       tyMap = Map.fromList baseTypes
