@@ -109,12 +109,15 @@ mkDummyState = do
   
     rID <- newTVarIO 0
 
-    seed <- newPureMT 
+    seed <- newPureMT
+
+    devs <- getDevices 
 
 -- Initialize PCAP (NOTE: Switch to bounded channels so packets don't accrete forever)
     pcapHandle <- initPCAP --initOffline --initPCAP
 
-    let initEnv = Environment  
+    let initEnv = Environment
+                  devs 
                   tCount
                   pktFactories 
                   pktMachines 
@@ -226,11 +229,11 @@ testMachineParsers = hspec $
 
     describe "push" $ do 
         it "passes" $
-          runTest "push DNS" >>= \x -> x `shouldBe` Pass 
+          runTest "push ARP (op=2 sha=12:34:56:78:aa:bb)" >>= \x -> x `shouldBe` Pass 
 
     describe "lift" $ do 
         it "passes" $ 
-          runTest "lift DNS" >>= \x -> x `shouldBe` Pass 
+          runTest "lift ETH (src=12:34:56:78:aa:bb dst=ff:ff:ff:ff:ff:ff etherType=666)" >>= \x -> x `shouldBe` Pass 
 
     describe "set" $ do 
         it "passes" $ 
@@ -395,6 +398,19 @@ testMachineParsers = hspec $
         runTest ("listenFor [ * ; IP4(proto=$(proto)) ; * ] timeout=2.5"
                  <> "maxTimeouts=3 multiplier=.4 onResponse=(void)") >>= \x -> x `shouldBe` Pass 
 
+    describe "listenFor2" $ do 
+      it "passes" $ 
+        runTest "listenFor [ * ; ARP (op<3) ; * ] timeout=2.5 maxTimeouts=3 multiplier=.4 onResponse=(void)" >>= \x -> x `shouldBe` Pass 
+
+    describe "listenFor3" $ do 
+      it "passes" $ 
+        runTest ("listenFor [ * ; IP4(src=$(dst) || dst=$(src)) ; * ] timeout=2.5"
+                 <> "maxTimeouts=3 multiplier=.4 onResponse=(void)") >>= \x -> x `shouldBe` Pass 
+
     describe "limit" $ do 
       it "passes" $ 
         runTest "limit 100 (report \"doop\")" >>= \x -> x `shouldBe` Pass  
+
+    describe "limit2" $ do 
+      it "passes" $ 
+        runTest "limit 100 (select ARP (op/= 1 && op /= 2) ~> report \"Got a weird arp!\")" >>= \x -> x `shouldBe` Pass  

@@ -34,7 +34,6 @@ generateS :: SourceParser
 generateS = lexeme $ try $ do
     void $ lexeme $ string "generate"
     dly <- prefix "wait=" (Just 0) int 
-    void . lexeme $ string "repeat="
     rpts <-  prefix "repeat=" (Just 0) int 
     bld <- builder protocolBuilder
     let ps =  V.force <$> V.mapM PO.makeProtocolMessageV2 bld

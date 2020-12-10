@@ -4,9 +4,11 @@ import PrimParserSpec
 import SerializerSpec 
 import RecordParserSpec 
 import MachineParserSpec
-
+import SourceParserSpec 
 
 main = do 
   ppSpec
   testRecordParsers
-  testMachineParsers 
+  testMachineParsers
+  testSourceParsers
+  testCommandParsers

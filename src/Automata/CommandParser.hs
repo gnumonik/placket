@@ -11,14 +11,13 @@ import Text.Megaparsec
 import PrimParsers
 import Data.Char (isDigit, isLetter)
 import Control.Monad.IO.Class
-import Data.Char 
 import Control.Concurrent.STM
 import ARPCache (prettyIPTable)
 import Control.Monad (void)
 import MachineParser 
 import SourceManager 
-import Control.Concurrent.Async (uninterruptibleCancel, Async, async)
-import Data.Machine (echo, plug, runT, (~>), runT_)
+import Control.Concurrent.Async (uninterruptibleCancel, async)
+import Data.Machine (echo, runT_)
 import Control.Monad.Trans.Reader
 import Control.Lens
 import FactoryTypes
@@ -27,7 +26,6 @@ import MyReaderT
 import RecordFuncs (formatList)
 import Data.Maybe
 import SourceParser 
-import PacketSources (capSource, reduceSource)
 import UtilityMachines (writeChan)
 import qualified Data.Text.IO as TIO 
 import Control.Monad.State.Strict (execStateT)
@@ -38,11 +36,9 @@ import Data.Hashable
 import PacketIO 
 import ArgumentParsers 
 import Data.Time.Clock 
-import Data.Time.Clock.System 
 import PrettyPrint 
-import Data.Word (Word8, Word16, Word32)
+import Data.Word (Word16)
 import Numeric 
-import Control.Concurrent (threadDelay)
 import Data.Either (isRight)
 
 tShow :: forall x. Show x => x -> T.Text 
@@ -141,7 +137,7 @@ saveFile = lexeme $ try $ do
 loadFile :: Parser Command
 loadFile = lexeme $ try $ do
     void . lexeme $ string "load"
-    fPath <- filePath
+    fPath <- prefix "path=" Nothing filePath
     return $ do
         d <- askForDisplayChan
         file <- liftIO $ E.try (TIO.readFile fPath)
@@ -219,7 +215,7 @@ showFactories = lexeme $ try $ do
   return $ do 
     fs <- askForFactories
     theTime <- liftIO $ getCurrentTime
-    display $ T.concat $ map (go theTime) (Map.toList fs)
+    display $ (T.concat $ map (go theTime) (Map.toList fs)) <> dashRow <> "\n\n"
  where
    go :: UTCTime -> (Word16,Factory) -> T.Text
    go time (fID,fac) 
@@ -383,21 +379,30 @@ initFactory iMode fID myFac = do
     let toRun  = myFac ^. factory
     myThread  <- liftIO . async $ runT_ toRun 
     theTime   <- liftIO getCurrentTime 
-    let activeFac = set fThread (Just myThread) . set startTime (Just theTime) . set isActive True $ myFac 
+    let activeFac = set fThread (Just myThread) 
+                  . set startTime (Just theTime) 
+                  . set isActive True $ myFac 
     when (iMode == NeedsInserted) $ do 
       modifyEnv $ over factories (Map.insert fID activeFac)
     when (iMode == AlreadyThere) $ do
-      modifyEnv $ over factories $ Map.adjust 
-        (set fThread (Just myThread) . set startTime (Just theTime) . set isActive True) fID
+      modifyEnv 
+        . over factories 
+        $ Map.adjust (set fThread (Just myThread) 
+        . set startTime (Just theTime) 
+        . set isActive True) fID
     sq <- askForServerQueue
-    liftIO . atomically . writeTBQueue sq $ GIMMEPACKETS (fromIntegral fID) (activeFac ^. fQueues)
-    display $ "Successfully activated Factory " 
-            <> (("FactoryID: " <>) . T.pack . (\x -> showHex x "") $ fID) 
-            <> "Factory Name: " <> (activeFac ^. facName)
-            <> ":\n" 
+    liftIO 
+      . atomically 
+      . writeTBQueue sq 
+      $ GIMMEPACKETS (fromIntegral fID) (activeFac ^. fQueues)
+    display $ "Successfully activated Factory" 
+          --  <> (("\nFactoryID: " <>) . T.pack . (\x -> showHex x "") $ fID) 
+            <> "\n\nFactory Name: " <> (activeFac ^. facName)
+            <> "\n\n" 
             <>  (activeFac ^. (srcData . srcSchema . _2)) 
             <> " >> " 
             <> (activeFac ^. (mchData . schema . _2))
+            <> "\n\n"
 
 startF :: Parser Command
 startF = lexeme $ try $ do
@@ -412,11 +417,11 @@ startF = lexeme $ try $ do
       Just (fID,myFac) -> initFactory AlreadyThere fID myFac 
 
 -- run allows a factory to be assembled and activated without first defining it. 
--- The syntax is: "run: <SOURCE> >> <MACHINE>"
+-- The syntax is: "run <SOURCE> >> <MACHINE>"
 ----- 
 runF :: Parser Command 
 runF = lexeme $ try $ do
-    void . lexeme $ string "run:"
+    void . lexeme $ string "run"
     rawSource <- lexeme $ manyTill anySingle (lookAhead $ string ">>")
     void . lexeme $ string ">>"
     rawMachine <- some anySingle 
@@ -434,12 +439,19 @@ runF = lexeme $ try $ do
         Nothing -> return () 
         Just (facID,myFac) -> do
           let toRun = myFac ^. factory
-          myThread <- liftIO . async $ runT_ toRun 
+          myThread <- liftIO 
+                   . async 
+                   $ runT_ toRun 
           theTime <- liftIO getCurrentTime 
-          let activeFac = set fThread (Just myThread) . set startTime (Just theTime) . set isActive True $ myFac 
+          let activeFac = set fThread (Just myThread) 
+                        . set startTime (Just theTime) 
+                        . set isActive True $ myFac 
           modifyEnv $ over factories (Map.insert facID activeFac)
           sq <- askForServerQueue
-          liftIO . atomically . writeTBQueue sq $ GIMMEPACKETS (fromIntegral facID) (activeFac ^. fQueues)
+          liftIO 
+            . atomically 
+            . writeTBQueue sq 
+            $ GIMMEPACKETS (fromIntegral facID) (activeFac ^. fQueues)
           display $ "Successfully activated Factory " 
                   <> (T.pack . (\x -> showHex x "") $ facID) 
                   <> ":\n" 
@@ -658,7 +670,8 @@ machineBuilder bMode inputString =
    where
 
         go bMode' (NamedMachine nm arr ) inString = do
-              display $ "Processing machine " <> mchName nm
+              when (bMode' == Named) $ do 
+                display $ "Processing machine " <> mchName nm
               e <- askForEnvironment
               st <- liftIO $ execStateT (makeMachines arr) (MyParserState (Right echo) [] e)
               let macc = return (st ^. machineAcc) >>= except
