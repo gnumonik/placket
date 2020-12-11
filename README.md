@@ -192,13 +192,13 @@ The syntax for defining a machine is: `m: <NAME> = <MACHINE> `, where `<NAME>` i
 
 There are two primitive operators for combining machines:
 
-### (**~>**): `<MACHINE1> ~> <MACHINE2>`
+#### (**~>**): `<MACHINE1> ~> <MACHINE2>`
 
 This operator composes `<MACHINE1>` and `<MACHINE2>` to form a composite machine, which can be reused in the construction of other machines or run directly. When an expression of the form `<MACHINE1> ~> <MACHINE2>` is compiled, the resulting composite machine first applies `<MACHINE1>` and then feeds its input into `<MACHINE2>`.
 
 The `~>` operator can be used to chain machines together *ad infinitum*. Any expression of the form `<MACHINE1> ~> <MACHINE2> ~> (...) ~> <MACHINEX>` will compile to a single machine, which can be reused.
 
-### (**~+>**): `<MACHINE1> ~+> (<MACHINE2> ~+>  <MACHINE3>) (<MACHINE4>) (...)` 
+#### (**~+>**): `<MACHINE1> ~+> (<MACHINE2> ~+>  <MACHINE3>) (<MACHINE4>) (...)` 
 
 The `~+>` operator is the *fanout* operator. It takes the output of the machine on the left, and feeds it into each of the machines on the right. The composite machine produced by the fanout operator yields the output of each of the machines on the right.
 
