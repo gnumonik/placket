@@ -54,7 +54,7 @@ testRecordParsers = hspec $
 
     describe "nonContigSet" $ do
       it "returns correct result" $ 
-        parseT nonContigSet "[1 10]" `shouldParse` (NonContigSet ["1" , "10"])
+        parseT nonContigSet "<1, 10>" `shouldParse` (NonContigSet ["1" , "10"])
 
     describe "fieldRange" $ do
       it "returns correct result" $ 
@@ -70,7 +70,7 @@ testRecordParsers = hspec $
 
     describe "fieldBuilderExp" $ do 
         it "returns correct result" $ 
-          parseT fieldBuilderExp "(shoop.doop=69 flop.drop=1-10 scewp.pewp=[3 4])" 
+          parseT fieldBuilderExp "(shoop.doop=69 flop.drop=1-10 scewp.pewp=<3, 4>)" 
             `shouldParse` FieldBuilderExp [
                                           FieldBuilder ["shoop","doop"] (SingleValue "69")
                                         , FieldBuilder ["flop","drop"] (RangeOfVals "1" "10")
@@ -171,5 +171,5 @@ testRecordParsers = hspec $
                     MsgSelector  $  ProtocolSelector  "ARP" FieldSelectorExpWC 
                   , 
                     MsgSelector $ ProtocolSelector  "ETH" (FieldSelectorExp . ATOM $ FieldSelector ["etherType"] EQ' (Literal . SingleValue $ "2054"))]
-                         
+    return () 
     

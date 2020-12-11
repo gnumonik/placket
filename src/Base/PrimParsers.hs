@@ -28,8 +28,7 @@ import           Numeric
 import           Text.Show.Functions  ()
 import           Data.List (foldl')
 import           Text.Hex 
-import Data.Monoid
-import Data.Functor.Identity
+
 
 type Parser = Parsec T.Text T.Text 
 
@@ -102,24 +101,24 @@ lexeme p = do
 
 range :: Parser (T.Text,T.Text)
 range = lexeme $ try $ do
-    first  <- lexeme $ some (satisfy $ \x -> x `notElem` ("- []()~" :: [Char]))
+    first  <- lexeme $ some (satisfy $ \x -> x `notElem` ("- []()~<>,\"" :: [Char]))
     void $ lexeme $  char '-'
-    second <- lexeme $ some (satisfy (\x -> x `notElem` ("- []()~" :: [Char])))
+    second <- lexeme $ some (satisfy (\x -> x `notElem` ("- []()~<>,\"" :: [Char])))
     return $ (T.pack first,T.pack second)
 
 singleValue :: Parser T.Text
 singleValue = lexeme $ try $ do
-    val <-  some (satisfy $ \x -> x `notElem` ("- []]()~" :: [Char]))
+    val <-  some (satisfy $ \x -> x `notElem` ("- []]()~,<>\"" :: [Char]))
     return $! T.pack val 
 
 
 atLeastTwo :: Parser [T.Text]
 atLeastTwo = lexeme $ try $ do
-    void $ char '['
-    first <- singleValue
-    rest <- manyTill (singleValue) (lookAhead $ char ']')
-    void $ char ']'
-    return $ first : rest
+    void $ char '<'
+    rest <- (singleValue `sepBy` (lexeme $ char ',')) 
+    void $ char '>'
+    return $ rest
+
 
 
 just :: Parser a -> Parser (Maybe a)

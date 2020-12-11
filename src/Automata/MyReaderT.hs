@@ -61,6 +61,17 @@ askForFactories = do
 getFactoryIDs :: MyReader [Word16]
 getFactoryIDs = map fst . Map.toList <$> askForFactories
 
+getIDByName :: T.Text -> MyReader (Maybe Word16)
+getIDByName nm = do
+  fs <- askForFactories
+  let myID = foldr (\(fID,fDat) acc -> 
+              if fDat ^. facName == nm
+              then Just fID
+              else acc) Nothing (Map.toList fs)
+  return myID 
+
+
+
 {--
 askForActiveMachines :: MyReader [MachineName]
 askForActiveMachines = do
@@ -161,8 +172,8 @@ getMachineByName nm = do
 
 getSourceByName :: T.Text -> MyReader (Either T.Text PacketSrc)
 getSourceByName txt = do
-    sIDs <- askForSourceData
-    let mySourceID = Map.lookup txt sIDs
+    sDat <- askForSourceData
+    let mySourceID = Map.lookup txt sDat
     case mySourceID of
         Nothing -> return . Left  $  "\nError: No source named " <> txt <> " exists.\n"
         Just s  -> return . Right $ s ^. pktSrc

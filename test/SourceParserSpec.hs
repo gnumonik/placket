@@ -278,3 +278,5 @@ testCommandParsers = hspec $
       it "passes" $
         runTestC "clearFactories" >>= \x -> 
           x `shouldBe` Pass
+
+    return () 

@@ -1,8 +1,40 @@
+# DISCLAIMER 
+
+**THIS IS ALPHA SOFTWARE. IT HAS ONLY BEEN TESTED FOR MINIMUM FUNCTIONALITY. THERE ARE ASSUREDLY BUGS LURKING IN THE CODE.**
+
+**THE AUTHOR IS NOT RESPONSIBLE FOR ANY DAMAGE THAT THE PROGRAM MAY CAUSE. THIS SOFTWARE IS PROVIDED FOR EDUCATIONAL USE ONLY.**
+
+Having said that, in all likelihood the worst thing that will happen is some space leak I'm unaware of or sending malformed packets.
+
+If anyone would like to contribute to the development of Pλacket, open an issue and I'll get in touch. At the moment Pλacket is at the proof-of-concept stage, but I intend to keep developing it (if time allows) in order to support more protocols and features. 
+
+At the moment, Pλacket supports **Ethernet, ARP, IPv4, ICMP(v4), TCP, UDP, and DNS** protocols.
+
+# Table of Contents 
+
+### I. [Pλacket Overview](#Pλacket)
+
+### II. [Installation](#Installation)
+
+### III. [Packet Machines](#Machines)
+
+###  IV. [Record Syntax](#Records)
+
+### V. [Packet Machines](#Machines)
+
+### VI. [Packet Sources](#Sources)
+
+### VII. [Commands and General Usage](#Commands)
+
+
+
 # Pλacket
 
-Pλacket (or placket if you hate Greek letters) is a command-line utility, written in Haskell and based on libpcap, that interprets a small reactive scripting language which generating and processing streams of raw network packets.
+Pλacket (or placket if you hate Greek letters) is a command-line utility, written in Haskell and based on libpcap, that interprets a small reactive scripting language which facilitates generating and processing streams of raw network packets.
 
 Pλacket allows the user to define and combine a variety of *sources* (e.g. network devices, pcap files, or packet generating functions), connect those sources to *packet machines*, which are workers that modify, filter, or perform effectful actions (such as sending, writing to a pcap file, pretty printing packets or fields to the terminal or a file, etc). 
+
+Pλacket's packet machines are designed to be run **concurrently**. Additionally, assuming that GHC (the Glasgow Haskell Compiler) supports the -threaded option on your system, Pλacket should make effective use of multiple cores/threads. 
 
 
 In this documentation, it will sometimes be useful to refer to the *shape* of a packet. The shape of a packet is the set of protocols, represented in descending order from left to right. For example, a typical DNS packet might have the shape [DNS ; UDP ; IP4 ; ETH].
@@ -16,9 +48,13 @@ Pλacket requires two external dependencies: libtinfo and libpcap-dev
 
 If you do not have these libraries present, they can be installed on Ubuntu with:
 
-`sudo apt install libtinfo` 
+```
+sudo apt install libtinfo
+```
 
-`sudo apt install libpcap-dev` 
+```
+sudo apt install libpcap-dev
+``` 
 
 (Replace `sudo apt install` with `sudo dnf install` for Fedora).
 
@@ -26,15 +62,21 @@ If your distribution's repository does not contain libtinfo, you might try insta
 
 After installing the dependencies, clone this repository with:
 
-`git clone https://github.com/gnumonik/placket.git`
+```
+git clone https://github.com/gnumonik/placket.git
+```
 
 Change directories: 
 
-`cd ./placket`
+```
+cd ./placket
+```
 
 And build Pλacket with the command:
 
-`stack build`
+```
+stack build
+```
 
 *Note*: Compiling Pλacket might take a while, especially if you don't have (the needed versions of) any of the Haskell dependencies required.
 
@@ -42,7 +84,9 @@ And build Pλacket with the command:
 
 Upon successful compilation of Pλacket, you should see a line of output that looks like:
 
-`Installing executable placket in </PATH/TO/BINARY>`
+```
+Installing executable placket in </PATH/TO/BINARY>
+```
 
 The binary will be located in the `</PATH/TO/BINARY>` folder, and you may move it to a more suitable location if you like. 
 
@@ -51,54 +95,44 @@ The binary will be located in the `</PATH/TO/BINARY>` folder, and you may move i
 
 
 
-# Packet Machines 
 
-User defined machines are constructed by combining and configuring the built-in machines provided by Pλacket. 
 
-The syntax for defining a machine is: `m: <NAME> = <MACHINE> `, where `<NAME>` is the name of the machine (only alphanumeric characters and underscores are allowed), and  `<MACHINE>` is either a a built-in machine, a user machine, or a combination (or composition) of built-in and/or user-defined machines.
-
-There are two primitive operators for combining machines:
-
-## (**~>**): `<MACHINE1> ~> <MACHINE2>`
-
-This operator composes `<MACHINE1>` and `<MACHINE2>` to form a composite machine, which can be reused in the construction of other machines or run directly. When an expression of the form `<MACHINE1> ~> <MACHINE2>` is compiled, the resulting composite machine first applies `<MACHINE1>` and then feeds its input into `<MACHINE2>`.
-
-The `~>` operator can be used to chain machines together *ad infinitum*. Any expression of the form `<MACHINE1> ~> <MACHINE2> ~> (...) ~> <MACHINEX>` will compile to a single machine, which can be reused.
-
-## (**~+>**): `<MACHINE1> ~+> (<MACHINE2> ~+>  <MACHINE3>) (<MACHINE4>) (...)` 
-
-The `~+>` operator is the *fanout* operator. It takes the output of the machine on the left, and feeds it into each of the machines on the right. The composite machine produced by the fanout operator yields the output of each of the machines on the right.
-
-Note that a machine definition that employs the `~+>` operator must enclose every independent machine to the right of the `~+>` with parentheses. The sequence of machines in parentheses following the `~+>` is final, i.e., in order to further compose or combine a machine using this operator with other machines, the machine must be given a name in a machine definition, and can then be combined in the same manner as any other machine.
-
-## Record Syntax 
-Each of these machines uses a variant of Pλacket's **record syntax** to access (and possibly modify) fields in a given packet. The record syntax varies slightly with the function of the machine (e.g. only machines that filter packets based on some field have employ the boolean comparison operators `>= / <= etc`), but the basic idea is the same.
+# Record Syntax 
+Each of the machines uses a variant of Pλacket's **record syntax** to access (and possibly modify) fields in a given packet. The record syntax varies slightly with the function of the machine (e.g. only machines that filter packets based on some field have employ the boolean comparison operators `>= / <= etc`), but the basic idea is the same.
 
 The general format for record syntax is: 
 
-`<PROTOCOLTYPE> ( <FIELD1>.<SUBFIELD>.<SUBSUBFIELD>=<VALUE1> <FIELD2>.<SUBFIELD2>.<SUBSUBFIELD2>=<VALUE2> (etc) )` 
+```
+<PROTOCOLTYPE> ( <FIELD1>.<SUBFIELD>.<SUBSUBFIELD>=<VALUE1> <FIELD2>.<SUBFIELD2>.<SUBSUBFIELD2>=<VALUE2> (etc) )
+``` 
 
 For machines that perform boolean tests on fields, the `=` maybe be replaced with `>=`,`<=`,`>`,`<`. The `=` operator is overloaded; in a context of setting packet fields, it means "set this field to the value on the right", whereas in a context of performing boolean tests it means "True if the field is equal to the value on the right".
 
 In this documentation, a context that uses record syntax to modify or construct fields will be referred to as a **Record Builder**, while a context that uses record syntax to perform boolean tests will be known as a **Record Selector**. The sub-expression `<FIELD1>.<SUBFIELD>=<VALUE>` will be referred to as a **Field Builder** or **Field Selector** depending upon the context. 
 
-**Record Builders** 
+### **Record Builders** 
 
 The parentheses in record syntax are not optional, but the fields in between them may be omitted. In the **Record Builder** context, a lack of fields between the parentheses will construct a protocol message with *all default values*. Because Pλacket aims to give maximum control over the construction of raw packets, the default values are **not** "sensibly chosen". For all numerical fields, the default value is 0. For all flags, the default value is False or Off. For all ByteString fields, the default value is the empty bytestring. A protocol message that contains optional fields (fields that might have zero or more members) constructed with the default values will be set with 0 members. 
 
-Furthermore, in the **Record Builder** context only, all numerical (or number-like fields) can be *enumerated* with a dash between the start value and the end value. The only field types that cannot be enumerated are Flags and ByteStrings. For example, the expression:
+Furthermore, in the **Record Builder** context only, all numerical (or number-like fields) can be **enumerated** with a dash between the start value and the end value. The only field types that cannot be enumerated are Flags and ByteStrings. For example, the expression:
 
-`IP4 (src=0.0.0.0-0.0.0.10)`
+```
+IP4 (src=0.0.0.0-0.0.0.10)
+```
 
-will construct 11 IPv4 messages. The first will have a source IP address of 0.0.0.0, while the last will have a source IP address of 0.0.0.10. **Warning:** use of multiple enumerations at the same time can cause the number of packets generated to grow exponentially. Though I have done my best to exploit Haskell's laziness to make generating large numbers of packets efficient, certain machines (particularly those that perform IO, like `send` or `dump`) will consume large amounts of memory if extremely high numbers of  packets are generated. 
+will construct 11 IPv4 messages. The first will have a source IP address of 0.0.0.0, while the last will have a source IP address of 0.0.0.10. 
 
-In addition to enumeration, one can construct a non-continguous set of values with a record builder by enclosing multiple values between `<` and `>`. The expression:
+**Warning:** use of multiple enumerations at the same time can cause the number of packets generated to grow exponentially. Though I have done my best to exploit Haskell's laziness to make generating large numbers of packets efficient, certain machines (particularly those that perform IO, like `send` or `dump`) will consume large amounts of memory if extremely high numbers of  packets are generated. 
 
-`IP4 (src=<192.168.2.30 192.168.2.50>)` 
+In addition to enumeration, one can construct a **non-continguous set** of values with a record builder by enclosing multiple values, separated by commas, between `<` and `>`. The expression:
+
+```
+IP4 (src=<192.168.2.30, 192.168.2.50>)
+``` 
 
 constructs two IP4 protocol messages, one with a source of 192.168.2.30 and another with a source of 192.168.2.50
 
-**Record Selectors** 
+### **Record Selectors** 
 
 As mentioned above, basic **Record Selector** syntax is nearly identical to the **Record Builder** syntax, differing only in  that `=` means "True if the field in the packet passed to the machine matches the value on the right", that the operators `>= <= > <` can replace `=`, and that enumerations and non-contiguous sets are not allowed.
 
@@ -108,65 +142,130 @@ Some examples:
 
 The expression: 
 
-`ARP (op=1 || op=2)` will select any packet containing an ARP message with an opcode of 1 or 2. 
+```
+ARP (op=1 || op=2)
+``` 
+
+will select any packet containing an ARP message with an opcode of 1 or 2. 
 
 Similarly, the expression:
 
-`ARP (sha=ff:ff:ff:ff:ff:ff && (op=1 || op=2))` selects any packet containing an ARP message with a broadcast sender address and either an opcode of 1 or 2. 
+```
+ARP (sha=ff:ff:ff:ff:ff:ff && (op=1 || op=2))
+``` 
 
-**Field Value Format** 
+Selects any packet containing an ARP message with a broadcast sender address and either an opcode of 1 or 2. 
+
+### **Field Value Format** 
 
 All numerical fields can be entered either as decimal numbers, binary numbers, or hexadecimal numbers. By default, Pλacket will attempt to read the value as a decimal. To enter a number in binary or hex, simply prefix the number with `0b` for binary or `0x` for hex. For example, Each of the following expressions will set the etherType field of the ethernet message in a packet to 666.
 
-`set ETH (etherType=666)`
+```
+set ETH (etherType=666)
+```
 
-`set ETH (etherType=0b1010011010)`
+```
+set ETH (etherType=0b1010011010)
+```
 
-`set ETH (etherType=0x029A)`
+```
+set ETH (etherType=0x029A)
+```
 
-Fields of the ByteString type can either be entered using an ascii string enclosed withon quotation marks, or in hex (the 0x prefix is not necessary here).
+Fields of the ByteString type can either be entered using an ascii string enclosed within quotation marks:
 
+```
+"thisIsAByteString"
+```
 
-# Packet-Level Packet Machines 
+ or in hex (the 0x prefix is not necessary here): 
+
+ ```
+ 1337dadface
+ ```
+
+# Machines 
+
+User defined machines are constructed by combining and configuring the built-in machines provided by Pλacket. 
+
+The syntax for defining a machine is: `m: <NAME> = <MACHINE> `, where `<NAME>` is the name of the machine (only alphanumeric characters and underscores are allowed), and  `<MACHINE>` is either a a built-in machine, a user machine, or a combination (or composition) of built-in and/or user-defined machines.
+
+There are two primitive operators for combining machines:
+
+### (**~>**): `<MACHINE1> ~> <MACHINE2>`
+
+This operator composes `<MACHINE1>` and `<MACHINE2>` to form a composite machine, which can be reused in the construction of other machines or run directly. When an expression of the form `<MACHINE1> ~> <MACHINE2>` is compiled, the resulting composite machine first applies `<MACHINE1>` and then feeds its input into `<MACHINE2>`.
+
+The `~>` operator can be used to chain machines together *ad infinitum*. Any expression of the form `<MACHINE1> ~> <MACHINE2> ~> (...) ~> <MACHINEX>` will compile to a single machine, which can be reused.
+
+### (**~+>**): `<MACHINE1> ~+> (<MACHINE2> ~+>  <MACHINE3>) (<MACHINE4>) (...)` 
+
+The `~+>` operator is the *fanout* operator. It takes the output of the machine on the left, and feeds it into each of the machines on the right. The composite machine produced by the fanout operator yields the output of each of the machines on the right.
+
+Note that a machine definition that employs the `~+>` operator must enclose every independent machine to the right of the `~+>` with parentheses. The sequence of machines in parentheses following the `~+>` is final, i.e., in order to further compose or combine a machine using this operator with other machines, the machine must be given a name in a machine definition, and can then be combined in the same manner as any other machine.
+
+-------
+## Packet-Level Packet Machines 
 
 These machines modify the shape of a packet. If a packet does not have a suitable shape for one of these machines to perform its operation, the packet is passed to the next machine unmodified. For example, if a packet of shape [ ARP ; ETH ] is fed into the machine `extract DNS`, it will yield the packet with its original [ ARP ; ETH ] shape.
 
-### `pop <PROTOCOLTYPE>`
 
-e.g. `pop DNS`
+
+#### `pop <PROTOCOLTYPE>`
+
+Examples:
+
+```
+pop DNS
+```
 
 `pop` accepts a protocol type (e.g. `ETH`) as an argument, and extracts the named protocol and every protocol of a *higher* OSI/TCP layer from the packet. For example, if a packet has the shape [TCP ; IP4 ; ETH], `pop IP4` will return a packet with the shape [ TCP ; IP4 ]
 
 ---
 
-### `pull <PROTOCOLTYPE>`
+#### `pull <PROTOCOLTYPE>`
 
-e.g. `pull DNS`
+Examples:
+
+```
+pull DNS
+```
 
 `pull` accepts a protocol type (e.g. `ETH`) as an argument, and extracts the named protocol and every protocol on a *lower* OSI/TCP layer from the packet. For example, if a packet has the shape [TCP ; IP4 ; ETH], `pull IP4` will return a packet with the shape [ IP4 ; ETH ]
 
 ---
 
-### `extract <PROTOCOLTYPE>` 
+#### `extract <PROTOCOLTYPE>` 
 
-e.g. `extract DNS`
+Examples:
+
+```
+extract DNS
+```
 
 `extract` accepts a protocol type (e.g. `ETH`) as an argument, and extracts the named protocol from the packet. For example, if a packet has the shape [TCP ; IP4 ; ETH], `extract IP4` will return a packet with the shape [ IP4 ]
 
 ---
 
-### `cut <PROTOCOLTYPE>`
+#### `cut <PROTOCOLTYPE>`
 
-e.g. `cut DNS`
+Examples:
+
+```
+cut DNS
+```
 
 `cut` accepts a protocol type (e.g. `ETH`) as an argument, and removes the named protocol from the packet. For example, if a packet has the shape [TCP ; IP4 ; ETH], `extract IP4` will return a packet with the shape [ TCP ; ETH ]
 
 ---
 
+#### `push <PROTOCOLTYPE> (<FIELD1>=<VALUE1> <FIELD2>=<VALUE2>)`
 
-### `push <PROTOCOLTYPE> (<FIELD1>=<VALUE1> <FIELD2>=<VALUE2>)`
+Examples: 
 
-e.g. `push ARP (op=2 sha=12:34:56:78:aa:bb)`
+```
+push ARP(op=2 sha=12:34:56:78:aa:bb)
+```
 
 `push` accepts a field builder expression (a protocol type and a set of fields) and adds the message constructed by the field builder expression to the *top* of the packet. For example, if a packet has the shape [ ETH ], the example in this section will add an ARP message on top, giving a packet of shape [ ARP ; ETH ]. 
 
@@ -174,9 +273,13 @@ e.g. `push ARP (op=2 sha=12:34:56:78:aa:bb)`
 
 ---
 
-### `lift <PROTOCOLTYPE> (<FIELD1>=<VALUE1> <FIELD2>=<VALUE2>)`
+#### `lift <PROTOCOLTYPE> (<FIELD1>=<VALUE1> <FIELD2>=<VALUE2>)`
 
-e.g. `lift ETH (src=12:34:56:78:aa:bb dst=ff:ff:ff:ff:ff:ff etherType=666)`
+Examples:
+
+```
+lift ETH (src=12:34:56:78:aa:bb dst=ff:ff:ff:ff:ff:ff etherType=666)
+```
 
 `lift` accepts a field builder expression (a protocol type and a set of fields) and adds the message constructed by the field builder expression to the *bottom* of the packet. For example, if a packet has the shape [ ARP ], the example in this section will add an ETH message on bottom, giving a packet of shape [ ARP ; ETH ]. 
 
@@ -184,29 +287,41 @@ e.g. `lift ETH (src=12:34:56:78:aa:bb dst=ff:ff:ff:ff:ff:ff etherType=666)`
 
 ---
 
-### `randomize <NUMBER OF PACKETS> [ <PROTOCOLTYPE1> ; <PROTOCOLTYPE2>]`
+#### `randomize <NUMBER OF PACKETS> [ <PROTOCOLTYPE1> ; <PROTOCOLTYPE2>]`
 
-e.g. `randomize 10 [ARP ; ETH]`
+Examples:
+
+```
+randomize 10 [ARP ; ETH]
+```
 
 `randomize` generates *n* packets of the specified shape *whenever it receives a packet as input*. (If you just want to generate random packets, use the source version, `genRandoms`.) It yields the original packet and one copy of the randomized packets until it has passed along *n* randomized packets, then yields only the input packets unmodified. 
 
 *Note*: At this time the packets are generated in a somewhat crude manner, and are not validated for protocol/port numbers, or checksum'd, the vast majority of packets generated this way will show up in wireshark (or any protocol analyzer) as corrupt or invalid. A better randomizer is on the to do list :) 
 
+*Note*: At the moment, generating random message content messages doesn't work correctly. (It generates bytestrings that are far too long.)
+
 ---
 
-### `void` (No arguments)
+#### `void` (No arguments)
 
-e.g. `void`
+Examples:
+
+```
+void
+```
 
 The `void` machine discards all packets that are passed to it, and never yields anything.
 
 ---
 
-### `checksum` (No Arguments)
+#### `checksum` (No Arguments)
 
-examples: 
+Examples: 
 
-`checksum`
+```
+checksum
+```
 
 The `checksum` machine calculates a checksum for every supported protocol message in a packet. (Note: It isn't possible to calculate an accurate checksum for each message individually, since the value of a checksum in one message will affect the value in other messages.)
 
@@ -216,58 +331,79 @@ Currently supports UDP, TCP, IP4, and ICMP. For TCP and UDP, if a packet is cons
 
 ---
 
-### `count <NUMBER OF PACKETS TO COUNT>`
+#### `count <NUMBER OF PACKETS TO COUNT>`
 
-examples: 
+Examples: 
 
-`count 10`
+```
+count 10
+```
 
 The `count` machine does not modify or filter packets, but instead counts *n* packets, reports the time that it took to process *n* packets to the terminal, and then repeats this process *ad infinitum*. 
 
 ---
 
-### `buffer <NUMBER OF PACKETS TO BUFFER>`
+#### `buffer <NUMBER OF PACKETS TO BUFFER>`
 
-examples: 
+Examples: 
 
-`buffer 100`
+```
+buffer 100
+```
 
 The `buffer` machine acts as a buffer; it waits until *n* packets have been passed to it, then yields them immediately down the line to the next machine.
 
 ---
 
-# Field-Level Packet Machines
+## Field-Level Packet Machines
+
 
 These machines either modify the record field(s) of a protocol message in a packet, or apply a boolean test to some field to determine whether to perform some action.
 
+------
 
-### `set <PROTOCOLBUILDER> `
+#### `set <PROTOCOLBUILDER> `
 
-e.g. `set IP4(proto=77 flags.df=T src=10.10.10.10)`
+Examples:
+```
+set IP4(proto=77 flags.df=T src=10.10.10.10)
+```
 
 The `set` machine accepts a **Protocol Builder** and modifies the field indicated by the builder. Each `set` machine may only modify one protocol at a time, and it will modify *every* occurrence of that protocol in the packet. (In ordinary circumstances there would only be one occurrence of a protocol in each packet, but if you are doing something adventurous, keep this fact in mind.)
 
 ---
 
-### `alert "<STRING>" <PROTOCOLSELECTOR>`
+#### `alert "<STRING>" <PROTOCOLSELECTOR>`
 
-e.g. `alert "someAlert" IP4(flags.df=T || checksum=0)`
+Examples:
+
+```
+alert "someAlert" IP4(flags.df=T || checksum=0)
+```
 
 The `alert` machine accepts a quoted string and **Protocol Selector**, and prints the string to the terminal when a packet maching the selector is passed to it. 
 
 ---
 
-### `report "<STRING>"`
+#### `report "<STRING>"`
 
-e.g. `report "Got a packet!"`
+Examples: 
+
+```
+report "Got a packet!"
+```
 
 Report is like alert, but it does not require a Protocol Selector and will print the argument to the terminal whenever it receives a packet.
 
 ---
 
-### `create wait=<TIME IN MICROSECONDS> repeat=<NUMBER OF REPEATS> <PROTOCOLBUILDER>`
+#### `create wait=<TIME IN MICROSECONDS> repeat=<NUMBER OF REPEATS> <PROTOCOLBUILDER>`
 
-e.g. `create wait=0 repeat=0 [ARP (op=2 tpa=192.168.0.2) ; ETH (etherType=2054)]`
+Examples:
+
+```
+create wait=0 repeat=0 [ARP (op=2 tpa=192.168.0.2) ; ETH (etherType=2054)]
+```
 
 The `create` machine accepts a time argument (in microseconds - one microsecond is 1/1000000th of a second) and a repeat argument (an integer). It yields both the created and original packet down the line to the next machine every *n* microseconds, and repeats *x* number of times before stopping. After stopping, it will yield any packets passed to it unmodified.
 
@@ -275,38 +411,44 @@ If you use enumeration or non-contiguous fields to create many packets in the Pr
 
 *Note*: The `wait=` and `repeat=` are optional, and you can omit those arguments entirely. The machine defaults to a wait time and repeat argument of 0 if the arguments are omitted. E.g. these are all valid: 
 
-`create repeat=0 [ARP (op=2 tpa=192.168.0.2) ; ETH (etherType=2054)]`
+```
+create repeat=0 [ARP (op=2 tpa=192.168.0.2) ; ETH (etherType=2054)]
 
-`create [ARP (op=2 tpa=192.168.0.2) ; ETH (etherType=2054)]`
+create [ARP (op=2 tpa=192.168.0.2) ; ETH (etherType=2054)]
+```
 
 ---
 
-### `select <PROTOCOLSELECTOR1>`
+#### `select <PROTOCOL> <FIELD SELECTOR>`
 
-examples:
+Examples:
 
-`select ARP`
+```
+select ARP
 
-`select ARP (op>2 && hrd!=6)`
+select ARP (op>2 && hrd!=6)
+```
 
 The `select` machine passes on any packet that satisfies the Protocol Selector expression, and discards any that do not. The fields are optional; as in the first example, you can omit the field values to select any packet that contains the chosen protocol.
 
 ---
 
 
-### `discard <PROTOCOLSELECTOR1>`
+#### `discard <PROTOCOLSELECTOR1>`
 
-examples:
+Examples:
 
-`discard ARP`
+```
+discard ARP
 
-`discard TCP(win<600)`
+discard TCP(win<600)
+```
 
 The `discard` machine discards any packet that satisfies the Protocol Selector expression, and passes along any that do not. The fields are optional; as in the first example, you can omit the field values to discard any packet that contains the chosen protocol.
 
 ---
 
-# Optional Field Machines 
+## Optional Field Machines 
 
 An *optional field* is a field that is either absent or has >= 1 inhabitants. Examples are: The IPv4 "Options" field, the DNS Question / Answer / Additional  fields, or the TCP options field. There isn't an elegant way to perform operations on these fields with normal record selector/builder syntax, so I've included a few special machines for performing these operations. 
 
@@ -314,39 +456,49 @@ An *optional field* is a field that is either absent or has >= 1 inhabitants. Ex
 
 ---
 
-### `modifyOpt <PROTOCOL> <OPTIONAL FIELD NAME> [(<FIELDSELECTOR1>) => <FIELDBUILDER>]`
+#### `modifyOpt <PROTOCOL> <OPTIONAL FIELD NAME> [(<FIELDSELECTOR1>) => <FIELDBUILDER>]`
 
-An example will probably be more illuminating: 
+An example will probably be illuminating: 
 
-`modifyOpt IP4 opts [(opType.opClass/=0) => opType.opClass=8]`
+```
+modifyOpt IP4 opts [(opType.opClass/=0) => opType.opClass=8]
+```
 
 In the above example, the machine looks for an packet containing an IP4 message. When it finds one, it checks to see if any of the inhabitants of the options field have an `opType.opClass` field not equal to 0. If it finds a match, it changes the value of the `opType.opClass` field to 8.
 
 *Note*: You can use `mOpt` instead of `modifyOpt` if you like. The following is valid: 
 
-`mOpt IP4 opts [(opType.opClass/=0) => opType.opClass=8]`
+```
+mOpt IP4 opts [(opType.opClass/=0) => opType.opClass=8]
+```
 
 ---
 
-### `insertOpt <PROTOCOL> <OPTIONAL FIELD NAME> <FIELDBUILDER>`
+#### `insertOpt <PROTOCOL> <OPTIONAL FIELD NAME> <FIELDBUILDER>`
 
 Again, I think an example is probably more useful than a deep explanation of the syntax:
 
-`insertOpt IP4 opts (opType.opNum=2 opType.opClass=3 opLength=6 opData=face)`
+```
+insertOpt IP4 opts (opType.opNum=2 opType.opClass=3 opLength=6 opData=face)
+```
 
 In the above example, the machine looks for a packet containing an IP4 message. When it finds one, it inserts an IP4 option with an opNum of 2, an opClass of 3, an opLength of 6, and opData "face" ("face" here is a hexadecimal bytestring).
 
 *Note*: You can use `iOpt` instead of `insertOpt` if you like. The following is valid: 
 
-`iOpt IP4 opts (opType.opNum=2 opType.opClass=3 opLength=6 opData=face)`
+```
+iOpt IP4 opts (opType.opNum=2 opType.opClass=3 opLength=6 opData=face)
+```
 
 ---
 
-### `deleteOpt <PROTOCOL> <NAME OF OPTIONAL FIELD> <FIELDSELECTOR>`
+#### `deleteOpt <PROTOCOL> <NAME OF OPTIONAL FIELD> <FIELDSELECTOR>`
 
 Example: 
 
-`deleteOpt IP4 opts (opType.opNum=3 || opType.opNum<2)`
+```
+deleteOpt IP4 opts (opType.opNum=3 || opType.opNum<2)
+```
 
 In the above example, the machine deletes any options with an opNum of 3 or an opNum <2 from any packet it finds that contains such a field.
 
@@ -355,25 +507,27 @@ In the above example, the machine deletes any options with an opNum of 3 or an o
 
 ---
 
-# Effectful (IO) Machine
+## Effectful (IO) Machine
 
 The machines in this group all perform some action (pretty printing packets to the terminal, writing them to a file, etc) instead of or in addition to modifying packets in some way. (This might seem like an odd category unless you are a Haskell programmer...)
 
 ---
 
-### `prettyPrint <PRINTMODE>`
+#### `prettyPrint <PRINTMODE>`
 
 Examples:
 
-`prettyPrint default`
+```
+prettyPrint default
 
-`prettyPrint hex`
+prettyPrint hex
 
-`prettyPrint bin`
+prettyPrint bin
 
-`prettyPrint`
+prettyPrint
 
-`pp`
+pp
+```
 
 Pretty prints a representation of each packet it receives to the terminal, then yields that packet down the line. The three print modes are `default`, `hex`, and `bin`. Default is generally base 10, except for types with a special format (IP4 or MAC addresses, DNS names, etc).
 
@@ -385,15 +539,17 @@ The mode argument is optional. If it is not present, the machine will print ever
 
 --- 
 
-### `writeField path="<PATH OF FILE TO WRITE>" label="<STRING>" mode=<PRINTMODE> <PROTOCOL> <FIELD NAME>`
+#### `writeField path="<PATH OF FILE TO WRITE>" label="<STRING>" mode=<PRINTMODE> <PROTOCOL> <FIELD NAME>`
 
 Examples: 
 
-`writeField path="/home/someUser/IP4s.txt" label="label" mode=hex IP4 src`
+```
+writeField path="/home/someUser/IP4s.txt" label="label" mode=hex IP4 src
 
-`writeField path="/home/someUser/IP4s.txt" hex IP4 src`
+writeField path="/home/someUser/IP4s.txt" hex IP4 src
 
-`wf path="/home/someUser/IP4s.txt" IP4 src`
+wf path="/home/someUser/IP4s.txt" IP4 src
+```
 
 Writes a textual representation of the selected field to a file. The printmode argument determines whether it will be binary, hex, or whatever the default formatting option is. The label argument is a prefix to the field on each line of the file. E.g. label="MaybeLeetHackers" will create lines prefixed with "MaybeLeetHackers: ". 
 
@@ -404,9 +560,13 @@ Can use `wf` instead of the full `writeField`.
 
 ---
 
-### `dump path="<PATH TO DUMP FILE>" <MAX NUMBER OF PACKETS TO DUMP>` 
+#### `dump path="<PATH TO DUMP FILE>" <MAX NUMBER OF PACKETS TO DUMP>` 
 
-Example: `dump path="/home/gnumonic/DUMPPPP" numPackets=10000"`
+Examples: 
+
+```
+dump path="/home/gnumonic/DUMPPPP" numPackets=10000"
+```
 
 Writes all packets it receives to a PCAP file indicated by the `path="x"` argument. Uses the "standard" PCAP format (not the next generation format). Will reject any packet that is larger than 65535 bytes in size. 
 
@@ -414,30 +574,35 @@ Writes all packets it receives to a PCAP file indicated by the `path="x"` argume
 
 ---
 
-### `send` (No arguments)
+#### `send` (No arguments)
 
 Example: 
 
-`send`
+```
+send
+```
 
 Sends a packet, then yields that packet to the next machine in the chain.
 
 --- 
 
-# Higher Order Machines
+## Higher Order Machines
 
 The machines in this section take one or more other machines as an argument. They allow for basic control flow or branching operations over the streams of packets that they are fed. 
 
-The `<MACHINE>` arguments to these packet workers doesn't have to be a single machine, it can be a chain of them composed with `~>`, or a named machine defined by you.
+The `<MACHINE>` arguments to these packet workers doesn't have to be a single machine, it can be a chain of them composed with `~>`, or a named machine defined by you. All sequences of machines passed as arguments to these machines **must be enclosed within parentheses**.
 
+---
 
-### `limit <NUMBER OF TIMES TO RUN MACHINE> (<MACHINE>)
+#### `limit <NUMBER OF TIMES TO RUN MACHINE> (<MACHINE>)
 
 Examples: 
 
-`limit 100 (report "Yay!")`
+```
+limit 100 (report "Yay!")
 
-`limit 100 (select ARP (op/= 1 && op /= 2) ~> report "Got a weird arp!")`
+limit 100 (select ARP (op/= 1 && op /= 2) ~> report "Got a weird arp!")
+```
 
 Runs the argument machine *n* times, then yields no further packets. 
 
@@ -446,17 +611,19 @@ Runs the argument machine *n* times, then yields no further packets.
 
 ---
 
-### `switch <SWITCHMODE> <PROTOCOL> <FIELDSELECTOR> (<MACHINE1>) (<MACHINE2>)`
+#### `switch <SWITCHMODE> <PROTOCOL> <FIELDSELECTOR> (<MACHINE1>) (<MACHINE2>)`
 
 Examples: 
 
-`switch reset IP4(flags.df=T) (void) (pp)`
+```
+switch reset IP4(flags.df=T) (void) (pp)
 
-`switch IP4(flags.df=T) (void) (pp)`
+switch IP4(flags.df=T) (void) (pp)
 
-`switch blow IP4(flags.df=T) (void) (pp)`
+switch blow IP4(flags.df=T) (void) (pp)
 
-`sw IP4(flags.df=T) (void) (discard ICMP ~> pp)`
+sw IP4(flags.df=T) (void) (discard ICMP ~> pp)
+```
 
 The `switch` machine operates as a switch. It runs the first machine until it receives a packet that satisfies the Field Selector for its protocol argument, then runs the second machine. If the switch is activated in `reset` mode, it will change back to the first machine from the second machine if it receives a(nother) packet that satisfies the selector. The mode argument can be omitted; the machine defaults to `blow` mode. 
 
@@ -464,25 +631,29 @@ The `switch` machine operates as a switch. It runs the first machine until it re
 
 ---
 
-### `countSwitch <NUMBER TO COUNT> <SWITCHMODE> (<MACHINE1>) (<MACHINE2>)`
+#### `countSwitch <NUMBER TO COUNT> <SWITCHMODE> (<MACHINE1>) (<MACHINE2>)`
 
 Examples: 
 
-`countSwitch 100 reset (pp) (void)`
+```
+countSwitch 100 reset (pp) (void)
 
-`swC 100 reset (pp) (void)`
+swC 100 reset (pp) (void)
+```
 
 Works like `switch` except it alternates machines based on the number of packets it has processed instead of a selector. If initialized in `reset` mode, it will alternate back to the first machine after passing *n* packets to the second machine.
 
 ---
 
-### `timeSwitch <TIMER IN MICROSECONDS> (<MACHINE1>) (<MACHINE2>)`
+#### `timeSwitch <TIMER IN MICROSECONDS> (<MACHINE1>) (<MACHINE2>)`
 
 Examples: 
 
-`timeSwitch 500000 (pp) (void)`
+```
+timeSwitch 500000 (pp) (void)
 
-`swT 500000 (pp) (void)`
+swT 500000 (pp) (void)
+```
 
 Works like `switch` or `countSwitch` with the exception that it doesn't accept a mode argument (for now; I'm working on it!) and therefore never resets. Note that there are 1,000,000 microseconds in a second. 
 
@@ -490,65 +661,77 @@ Works like `switch` or `countSwitch` with the exception that it doesn't accept a
 
 ---
 
-### `until <PROTOCOL> <FIELD SELECTOR> (<MACHINE>)`
+#### `until <PROTOCOL> <FIELD SELECTOR> (<MACHINE>)`
 
 Examples: 
 
-`until TCP(seqNum>100) (pp)`
+```
+until TCP(seqNum>100) (pp)
+```
 
 `until` runs the argument machine until it received a packet that satisfies the selector expression, then stops yielding packets entirely. 
 
 ---
 
-### `after <PROTOCOL> <FIELD SELECTOR> (<MACHINE>)`
+#### `after <PROTOCOL> <FIELD SELECTOR> (<MACHINE>)`
 
 Examples: 
 
-`after TCP(seqNum>100) (pp)`
+```
+after TCP(seqNum>100) (pp)
+```
 
 The inverse of `until`. Discards all packets until it is passed one that satisfies the selector expression, then runs the argument machine on all inputs forever. 
 
 --- 
 
-### `when <PROTOCOL> <FIELD SELECTOR> (<MACHINE>)`
+#### `when <PROTOCOL> <FIELD SELECTOR> (<MACHINE>)`
 
 Examples: 
 
-`when IP4(flags.df=1) (void)`
+```
+when IP4(flags.df=1) (void)
+```
 
 `when` checks whether its input packets satisfy the selector expression and runs the argument machine on it (+ yields the output of running that machine) if the packet does satisfy the selector. If the packet does not satisfy the selector, it is yielded down the chain unmodified. 
 
 ---
 
-### `unless <PROTOCOL> <FIELD SELECTOR> (<MACHINE>)`
+#### `unless <PROTOCOL> <FIELD SELECTOR> (<MACHINE>)`
 
 Examples: 
 
-`unless IP4(flags.df=1) (void)`
+```
+unless IP4(flags.df=1) (void)
+```
 
 `unless` is the inverse of `when`. It yields any packets unmodified that do satisfy the selector expression down the chain, and yields the product of running the argument machine on its input down the line if the input does not satisfy the selector.
 
 ---
 
-### `case [(<PROTOCOL> <FIELD SELECTOR>) => (MACHINE1) ; (<PROTOCOL> <FIELD SELECTOR>) => (MACHINE2) ; (...) ]`
+#### `case [(<PROTOCOL> <FIELD SELECTOR>) => (MACHINE1) ; (<PROTOCOL> <FIELD SELECTOR>) => (MACHINE2) ; (...) ]`
 
 Examples: 
 
-`case [IP4 => (pp) ; ARP(op>2 || hrd/=4) => (report "Yay!") ]`
+```
+case [IP4 => (pp) ; ARP(op>2 || hrd/=4) => (report "Yay!") ]
+```
 
 `case` takes an arbitrary number of selector expressions and machines, checks each packet against each selector, and yields the result of feeding the packet into the machine associated with the *first* matching selector. If the packet does not match any selector, it is discarded.
 
 --- 
 
-### `listenFor (See explanation for the arguments)` 
+#### `listenFor (See explanation for the arguments)` 
 
 Example:
 
-`listenFor [ * ; IP4 (proto=$(proto)) ; * ] timeout=2.5 maxTimeouts=3 multiplier=.4 onResponse=(void)`
+```
+listenFor [ * ; IP4 (proto=$(proto)) ; * ] timeout=2.5 maxTimeouts=3 multiplier=.4 onResponse=(void)
 
-`listenFor [ * ; ARP (op<3) ; * ] timeout=2.5 maxTimeouts=3 multiplier=.4 onResponse=(void)`
+listenFor [ * ; ARP (op<3) ; * ] timeout=2.5 maxTimeouts=3 multiplier=.4 onResponse=(void)
 
-`listenFor [ * ; IP4(src=$(dst) || dst=$(src)) ; * ] timeout=2.5 maxTimeouts=3 multiplier=.4 onResponse=(void)`
+listenFor [ * ; IP4(src=$(dst) || dst=$(src)) ; * ] timeout=2.5 maxTimeouts=3 multiplier=.4 onResponse=(void)
+```
 
 `listenFor` is probably the most complicated machine, so it needs a bit of an explanation. 
 
@@ -568,68 +751,82 @@ The thought behind `listenFor` was that it could be used to write probes, though
 
 ---
 
-# Packet Sources 
+## Sources 
 
 Now that you know how the machines work, you need to connect them to some input! Fortunately, there are fewer sources than machines, so this section should be a little easier to digest. Here are the sources: 
 
-### `generate wait=<DELAY IN MICROSECONDS> repeat=<NUMBER OF REPEATS> [<PROTOCOL> <FIELDBUILDER> ; <PROTOCOL2> <FIELDBUILDER2> (..etc..)]`
+---
+
+#### `generate wait=<DELAY IN MICROSECONDS> repeat=<NUMBER OF REPEATS> [<PROTOCOL> <FIELDBUILDER> ; <PROTOCOL2> <FIELDBUILDER2> (..etc..)]`
 
 Examples: 
 
-`generate wait=10 repeat=10 [ARP (op=7) ; ETH (etherType=2054)]`
+```
+generate wait=10 repeat=10 [ARP (op=7) ; ETH (etherType=2054)]
 
-`generate 10 10 [ARP (op=7) ; ETH (etherType=2054)]`
+generate 10 10 [ARP (op=7) ; ETH (etherType=2054)]
+```
 
 Generate works exactly the same way that `create` does, except generate is a source. (The difference is: `create` only creates packets when it receives some packet as input, whereas `generate` will continuously yield packets according to the arguments until it has exhausted the repeats).
 
 
 --- 
 
-### `genRandoms num=<NUM TO GEN> wait=<DELAY IN MICROSECONDS> repeat=<NUM OF REPEATS> [<PROTOCOL> ; PROTOCOL ; (...etc.)]`
+#### `genRandoms num=<NUM TO GEN> wait=<DELAY IN MICROSECONDS> repeat=<NUM REPEATS> [<PROTOCOL> ; PROTOCOL ; (...etc.)]`
 
 Examples: 
 
-`genRandoms num=100 wait=500 repeat=1000 [DNS ; UDP ; IP4 ; ETH]`
+```
+genRandoms num=100 wait=500 repeat=1000 [DNS ; UDP ; IP4 ; ETH]
 
-`genRandoms 100 500 1000 [DNS ; UDP ; IP4 ; ETH]`
+genRandoms 100 500 1000 [DNS ; UDP ; IP4 ; ETH]
 
-`genRandoms  [DNS ; UDP ; IP4 ; ETH]`
+genRandoms  [DNS ; UDP ; IP4 ; ETH]
+```
 
 `genRandoms` is the source version of `randomize`, and functions exactly the same way with the exception that it will yield packets continuously until it has exhausted its repeats. 
 
 ---
 
-### `readPcap path="<PATH TO PCAP FILE>"`
+#### `readPcap path="<PATH TO PCAP FILE>"`
 
 Examples: 
 
-`read path="/path/to/pcap.pcap"`
+```
+read path="/path/to/pcap.pcap"
+```
 
 `readPcap` reads a pcap file and yields all packets from that file that Pλacket is able to deserialize. (Uses libPcap so should work with the next generation pcap format).
 
 
 ---
 
-### `listen` (No arguments)
+#### `listen` (No arguments)
 
 Examples:
 
-`listen`
+```
+listen
+```
 
 `listen` listens for packets on a device. At the moment (...mainly because I only have one NIC that works with Linux...), the device is always the default device selected by the Network.Pcap library. Fixing this to allow users to select their device for listening and sending is a high priority once I get a new NIC.
 
 ---
 
 
-### `(<SOURCE1>) :Y: (<SOURCE2>)`
+#### `(<SOURCE1>) :Y: (<SOURCE2>)`
 
 Examples: 
 
-`(listen) :Y: (genRandoms  [DNS ; UDP ; IP4 ; ETH])`
+```
+(listen) :Y: (genRandoms  [DNS ; UDP ; IP4 ; ETH])
+```
 
 `:Y:` is a *source combinator*. The `:Y:` combinator accepts two sources enclosed in parentheses and reads from each non-deterministically, i.e., it does not strictly alternate between each source or evenly interleave one with the other, but reads from each as soon as it is available. `:Y:` can be nested, such that, e.g: 
 
-`((SOURCE1) :Y: (SOURCE2)) :Y: (SOURCE3)` 
+```
+((SOURCE1) :Y: (SOURCE2)) :Y: (SOURCE3)
+``` 
 
 Should work.
 
@@ -639,11 +836,13 @@ The parentheses are not optional, though they might become optional once I have 
 --- 
 
 
-### `(<SOURCE1>) :T: (<SOURCE2>)`
+#### `(<SOURCE1>) :T: (<SOURCE2>)`
 
 Examples: 
 
-`(listen) :T: (genRandoms  [DNS ; UDP ; IP4 ; ETH])`
+```
+(listen) :T: (genRandoms  [DNS ; UDP ; IP4 ; ETH])
+```
 
 `:T:` is a *source combinator*. The `:T:` combinator accepts two sources enclosed in parentheses and reads from each -deterministically, i.e., it does  strictly alternate between each source and evenly interleaves one with the other. If *one* source becomes unavailable, the composite source creates with `:T:` will stop yielding.  `:T:` can be nested, such that, e.g: 
 
@@ -653,7 +852,9 @@ Should work.
 
 The parentheses are not optional, though they might become optional once I have some time to rework the parser. 
 
-# Commands and Usage
+---
+
+# Commands
 
 By now, you know how machines and sources work. Here, I'm going to explain how you can *combine* and *run* those machines, and go over the various commands the program supports. 
 
@@ -661,7 +862,9 @@ Terminological note: A **factory** is a **source** that is connected to a **mach
 
 Probably the most common command you will use is `run`. Its syntax is:
 
-`run <SOURCE> >> <MACHINE> ~> <MACHINE2> ~> (..etc..)`
+```
+run <SOURCE> >> <MACHINE> ~> <MACHINE2> ~> (..etc..)
+```
 
 `run` lets you activate a factory (a source and a machine that accepts input from that source) *without having to first define them*. 
 
@@ -695,17 +898,17 @@ The line:
 Successfully activated Factory 114
 ```
 
-Contains the **Factory ID**, in this case, **144**. Since we ran this factory without first defining it, but might want to stop it from running at some point, the **Factory ID** gives us a way to refer to the machine. 
+Contains the **Factory Name**, in this case, **144**. Since we ran this factory without first defining it, but might want to stop it from running at some point, the **Factory Name** gives us a way to refer to the machine. 
 
 Instead of using run, you could **define** the factory to give it a name: 
 
 ```
-f: print10ARP = listen >>select ARP ~> limit 10 ( pp)
+f: print10ARP = listen >> select ARP ~> limit 10 ( pp)
 ```
 
 Prefixing a line with `f:` is how we let Pλacket know that we are defining a factory, that is, a matched source and (chain of) machine(s).
 
-We could then start this factory with the `start` command instead of using run: 
+We could then start this factory with the `start` command instead of using run. (You can also use the start command to restart an anonymous packet factory that has been paused.)
 
 ```
 start print10ARP
@@ -717,9 +920,177 @@ Factory Name: print10ARP
 listen >> select ARP ~> limit 10 (pp)
 ```
 
-We can stop a factory: 
+We can stop a packet factory, whether it has been initialized with the `start` or `run`, using the `stop` command, e.g.
 
+```
+stop 114
 
+Successfully stopped factory 114
+```
+
+```
+stop print10ARP
+
+Successfully stopped factory print10ARP
+```
+
+The `stop` command pauses a packet factory, but the factory maintains its state. In the above examples, the `limit` machine keeps track of the number of packets passed to it over its entire lifetime. Consequently, if we were to restart `print10ARP`, and it had already printed 10 packets prior to pausing it, it will *not* reset. 
+
+In order to reset the state of a packet factory, we must use the `kill` command. E.g.
+
+```
+kill print10ARP
+
+Successfully killed factory print10ARP
+```
+
+If, after running the kill command, we restarted the factory with `start print10ARP`, the limit counter would reset, and it would once again prettyPrint 10 ARP packets to the terminal. 
+
+We can view all factories (either those that are explicitly defined by us or run anonymously using `run`) by using the `showFactories` command: 
+
+```
+showFactories 
+
+|--------------------------<<<  Name: print10ARP  >>>--------------------------|
+|Factory ID: ec9e                                                              |
+|- - - - - - - - - - - - - - <<<  Source code:  >>>- - - - - - - - - - - - - - |
+|print10ARP = listen  >> select ARP ~> limit 10 ( pp)                          |
+|-   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   - |
+|Status: Inactive                                                              |
+|------------------------------------------------------------------------------|
+|------------------------------------------------------------------------------|
+```
+
+Here, we can see whether the factory is active or not, and view its source code and name. (The factory ID is for internal use / debugging purposes and can be ignored.)
+
+We can also view the machines and sources used to construct a factory with 
+
+```
+showMachines
+```
+
+and 
+
+```
+showSources
+```
+
+If we have no more use for a packet factory, we can delete it with `deleteFactory`. E.g.
+
+```
+deleteFactory print10ARP
+
+Successfully killed factory print10ARP
+```
+
+Deleting a factory kills it (i.e. cancels the thread it is running on) and removes it from the store of definitions. 
+
+```
+deleteSource <SOURCE NAME>
+```
+
+and 
+
+```
+deleteMachine <MACHINE NAME>
+```
+
+Remove source and machine definitions respectively. 
+
+The commands
+
+```
+clearFactories
+
+clearSources
+
+clearMachines
+```
+
+Kill and delete **all** factories, sources, and machines, respectively. 
+
+Pλacket provides a few utility commands that might come in handy. 
+
+First, `showArpCache` displays a table of MAC to IP Address mappings. (Note that Pλacket only records ARP requests that it has received, it does not query the system level arp cache). E.g.
+
+```
+showArpCache
+
+|-----------------------------<<<  ARP Table  >>>------------------------------|
+|IP: 192.168.0.2    MAC: b0:95:75:46:a5:cf   Time seen: 20:12:11:03:12:15      |
+|------------------------------------------------------------------------------|
+|IP: 192.168.0.3    MAC: e4:a7:a0:7:5e:72    Time seen: 20:12:11:03:12:12      |
+|------------------------------------------------------------------------------|
+|IP: 192.168.0.150  MAC: 0:d8:61:a9:30:69    Time seen: 20:12:11:03:12:13      |
+|------------------------------------------------------------------------------|
+|IP: 192.168.0.151  MAC: f0:18:98:83:d5:61   Time seen: 20:12:11:03:12:14      |
+|------------------------------------------------------------------------------|
+```
+
+The `deviceInfo` command prints a short summary of all network interfaces, and their addresses: 
+
+```
+deviceInfo
+
+                                                                                
+|- lo -------------------------------------------------------------------------|
+|  |-IP4: 127.0.0.1                                                            |
+|  |-IP6: 01000000000000000000000000000000                                     |
+|  |-MAC: 0:0:0:0:0:0                                                          |
+|------------------------------------------------------------------------------|
+                                                                                
+                                                                                
+|- enp37s0 --------------------------------------------------------------------|
+|  |-IP4: 192.168.0.150                                                        |
+|  |-IP6: bd3dcd3ebf071b8800000000000080fe                                     |
+|  |-MAC: 0:d8:61:a9:30:69                                                     |
+|------------------------------------------------------------------------------|
+                                                                                
+                                                                                
+|- virbr0 ---------------------------------------------------------------------|
+|  |-IP4: 192.168.122.1                                                        |
+|  |-IP6: 00000000000000000000000000000000                                     |
+|  |-MAC: 52:54:0:5e:2:c8                                                      |
+|------------------------------------------------------------------------------|
+                                                                                
+                                                                                
+|- virbr0-nic -----------------------------------------------------------------|
+|  |-IP4: 0.0.0.0                                                              |
+|  |-IP6: 00000000000000000000000000000000                                     |
+|  |-MAC: 52:54:0:5e:2:c8                                                      |
+|------------------------------------------------------------------------------|
+```
+
+And basic statistics for each factory can be viewed with the `showStats` command: 
+
+```
+showStats
+
+|------------------------------------------------------------------------------|
+|Name: print10ARP ID#: 54138     Packets in: 515     Packets out: 10           |
+|------------------------------------------------------------------------------|
+```
+
+Finally, the `save` and `load` commands allow you to save the active machine, source, and factory definitions to a file, or load them from a file (respectively). 
+
+`save` can be called without any arguments except the path, e.g.
+
+```
+save "/home/user/definitions.txt"
+
+```
+
+(The quotation marks are mandatory.) 
+
+Or it can be called with a `mode` option. `mode=write` will overwrite the existing content of the file, while `mode=append`, which is the default when `save` is invoked without any options, adds definitions to the end. 
+
+Load doesn't have any options, and simply tries to read definitions from the file, e.g.
+
+```
+load "/home/user/definitions.txt"
+```
+
+**Note**: At the moment, the implementation of `save` and `load` is somewhat crude. `load` will detect duplicate definitions while loading, but save does *not* detect whether a definition with the same name already exists in the file.
 
 
 

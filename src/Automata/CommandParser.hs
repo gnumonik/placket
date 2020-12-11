@@ -72,7 +72,7 @@ commands = lexeme $ try $ do
         "clearFactories" -> clearFactories
         "showFactories"  -> showFactories 
         "deviceInfo"     -> deviceInfo
-        _                -> fail $ "Error: " <> first <> " is not a valid packet string, or perhaps you forgot to preface a machine definition with m:, or a source definition with s:"
+        _                -> fail $ "Error: " <> first <> " is not a valid command. Or perhaps you forgot to preface a machine definition with m:, a source definition with s:, or a factory definition with f:"
 
 deviceInfo :: Parser Command 
 deviceInfo = lexeme $ try $ do
@@ -172,9 +172,9 @@ showStats = lexeme $ try $ do
           fName  = fac ^. facName
       in liftIO (readTVarIO inVar) >>= \inCount -> 
             liftIO (readTVarIO outVar) >>= \outCount -> 
-              return $ ["Name: " <> fName
-                       ,"ID#: "  <> tShow fID 
-                       ,"Packets in: " <> tShow inCount
+              return $ ["Name: " <> fName <> " "
+                       ,"ID#: "  <> tShow fID <> " "
+                       ,"Packets in: " <> tShow inCount <> " "
                        ,"Packets out: " <> tShow outCount ]
 
 showArpTables :: Parser Command
@@ -302,7 +302,7 @@ runStop sMode fID toStop = do
         sq <- askForServerQueue
         writeQ sq $ NOMOREPACKETS . fromIntegral $ fID
         modifyEnv . over factories $ Map.adjust (set isActive False . set startTime Nothing) fID
-        display $ "Successfully stopped factory " <> (toStop ^. facName)
+        display $ "Successfully stopped factory " <> (toStop ^. facName) <> "\n"
 
 stopAll :: Parser Command
 stopAll = lexeme $ try $ do
@@ -453,7 +453,7 @@ runF = lexeme $ try $ do
             . writeTBQueue sq 
             $ GIMMEPACKETS (fromIntegral facID) (activeFac ^. fQueues)
           display $ "Successfully activated Factory " 
-                  <> (T.pack . (\x -> showHex x "") $ facID) 
+                  <> (myFac ^. facName)
                   <> ":\n" 
                   <>  (T.pack rawSource) <> " >> " <> (T.pack rawMachine)
 
@@ -537,9 +537,8 @@ clearMachines = lexeme $ try $ do
 parseDefs :: Parser (MyReader ())
 parseDefs = lexeme $ try $ do 
     option () space 
-    def <- defs
-    let p = sortInput
-    case mapM (parseLex p) def of
+    def <-  defs
+    case mapM (parseLex sortInput) $ dedup def of
         Left err -> return $ do
             d <- askForDisplayChan
             writeChan d $ err
@@ -561,15 +560,28 @@ parseDefs = lexeme $ try $ do
                 mapM_ (\x -> writeChan d $ (x <> "\n"))    mchDefs 
                 mapM_ (machineBuilder Named) mchDefs 
                 mapM_ (sourceBuilder Named) srcDefs
-                mapM_ factoryBuilder facDefs 
+                mapM_ factoryBuilder facDefs
+    
 
+dedup :: Foldable t => t T.Text -> [T.Text]
+dedup ui = go ui'
+  where 
+    go :: [(T.Text,T.Text)] -> [T.Text]
+    go [] = [] 
+    go (x:xs) = snd x : go (filter (\z -> fst z /= fst x) xs)
+
+
+    ui' = foldr (\x acc -> 
+      case parseLex splitEq x of
+          Left _ -> acc
+          Right (nm,_) -> (nm,x) : acc) [] ui
 sortInput :: Parser UserInput
 sortInput = sourceDef <|> machineDef <|> factoryDef <|> userCommand 
 
 sourceDef :: Parser UserInput
 sourceDef = lexeme $ try $ do
     option () space 
-    sourceString
+    lexeme $ sourceString
     option () space 
     rest <- lexeme $ some anySingle
     return $! SourceDef . T.pack $ rest
@@ -612,8 +624,9 @@ defs = manyTill go eof
 
 splitEq :: Parser (T.Text, T.Text)
 splitEq = lexeme $ try $ do
-    first <- lexeme $ some (satisfy $ \x -> isLetter x || isDigit x || x == '_')
-    void . lexeme $ char '='
+    option () space 
+    first <- lexeme $ manyTill (anySingle) (lexeme . char $ '=')
+    -- void . lexeme $ char '='
     rest <- lexeme $ some anySingle
     return $! (T.pack first, T.pack rest)
 
@@ -623,7 +636,7 @@ sourceBuilder :: BuilderMode -> T.Text -> MyReader (Maybe SourceData)
 sourceBuilder bMode inputString =
     case bMode of
       Named -> except (parseLex splitEq inputString) >>= \case 
-          Just (nm,srcTxt) -> go bMode nm srcTxt inputString 
+          Just (nm,srcTxt) -> go bMode (trim nm) srcTxt inputString 
           Nothing -> return Nothing   
 
       Anonymous -> mkRandomSrcName >>= \sName -> 
@@ -708,3 +721,18 @@ splitSchema :: T.Text -> (T.Text,T.Text)
 splitSchema txt = let a = trimSpaces . T.takeWhile (/= '=') $ txt
                       b = trimSpaces . T.drop 1 . T.dropWhile (/= '=') $ txt 
                   in (a,b)
+
+prune :: Parser a -> Parser a
+prune p = lexeme . try $ do
+  option () space
+  parsed <- p
+  option () space
+  return parsed
+
+trim' :: Parser T.Text
+trim' = T.pack <$> prune (some $ letterChar <|> digitChar <|> char '_')
+
+trim :: T.Text -> T.Text
+trim txt = case parseLex trim' txt of
+  Left _ -> txt
+  Right newTxt -> newTxt 

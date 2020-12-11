@@ -52,7 +52,7 @@ ppSpec = hspec $
 
       describe "atLeastTwo" $ do
         it "returns correct result" $ 
-          parseT atLeastTwo "[101 666 abcde ]" `shouldParse` ["101","666","abcde"]
+          parseT atLeastTwo "<101, 666, abcde>" `shouldParse` ["101","666","abcde"]
 
       describe "word8(Dec)" $ do
         it "returns correct result" $ 
@@ -115,3 +115,5 @@ ppSpec = hspec $
       describe "quotedString" $ do 
         it "returns correct result" $ 
           parseT quotedString "\"of thee i string\"" `shouldParse` "of thee i string"
+          
+      return () 
