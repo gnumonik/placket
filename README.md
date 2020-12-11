@@ -8,7 +8,7 @@ Having said that, in all likelihood the worst thing that will happen is some spa
 
 If anyone would like to contribute to the development of Pλacket, open an issue and I'll get in touch. At the moment Pλacket is at the proof-of-concept stage, but I intend to keep developing it (if time allows) in order to support more protocols and features. 
 
-At the moment, Pλacket supports **Ethernet, ARP, IPv4, ICMP(v4), TCP, UDP, and DNS** protocols. I've leveraged template haskell to automate much of the work of adding new protocols. However, I'm a self taught coder hoping to transition careers (this is my first "real" program), and since there aren't all that many Haskell jobs, I have to spend some time on Scala and/or Rust before I can flesh out the protocol support here :-(
+At the moment, Pλacket supports **Ethernet, ARP, IPv4, ICMP(v4), TCP, UDP, and DNS** protocols. I've leveraged template haskell to automate much of the work of adding new protocols. However, I'm a self taught coder hoping to transition careers (this is my first "real" program, Haskell is my first language), and since there aren't all that many Haskell jobs, I have to spend some time on Scala and/or Rust before I can flesh out the protocol support here :-(
 
 # Table of Contents 
 
