@@ -97,7 +97,7 @@ The binary will be located in the `</PATH/TO/BINARY>` folder, and you may move i
 
 
 
-# Record Syntax 
+# Records
 Each of the machines uses a variant of Pλacket's **record syntax** to access (and possibly modify) fields in a given packet. The record syntax varies slightly with the function of the machine (e.g. only machines that filter packets based on some field have employ the boolean comparison operators `>= / <= etc`), but the basic idea is the same.
 
 The general format for record syntax is: 
